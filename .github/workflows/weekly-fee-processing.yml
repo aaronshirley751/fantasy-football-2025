@@ -1,0 +1,100 @@
+name: Weekly Fantasy Football Fee Processing
+
+on:
+  # Run every Tuesday at 2 AM EST (after Monday Night Football)
+  schedule:
+    - cron: '0 7 * * 2'  # 7 AM UTC = 2 AM EST during standard time
+  
+  # Allow manual triggering with week number input
+  workflow_dispatch:
+    inputs:
+      week_number:
+        description: 'NFL Week Number to process'
+        required: true
+        default: '1'
+        type: string
+      league_id:
+        description: 'League ID (leave default)'
+        required: false
+        default: 'd06f0672-2848-4b5d-86f5-9ab559605b4f'
+        type: string
+
+jobs:
+  process-weekly-fees:
+    runs-on: ubuntu-latest
+    name: Process Fantasy Football Fees
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Get current NFL week
+      id: get-week
+      run: |
+        # Calculate current NFL week based on date
+        if [ "${{ github.event.inputs.week_number }}" != "" ]; then
+          echo "week=${{ github.event.inputs.week_number }}" >> $GITHUB_OUTPUT
+        else
+          # Simple calculation: week 1 starts September 5th, 2025
+          start_date="2025-09-04"
+          current_date=$(date +%Y-%m-%d)
+          days_diff=$(( ($(date -d "$current_date" +%s) - $(date -d "$start_date" +%s)) / 86400 ))
+          week_number=$(( days_diff / 7 + 1 ))
+          
+          # Cap at week 18 (regular season)
+          if [ $week_number -gt 18 ]; then
+            week_number=18
+          fi
+          if [ $week_number -lt 1 ]; then
+            week_number=1
+          fi
+          
+          echo "week=$week_number" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Process Weekly Fees
+      run: |
+        echo "Processing fees for Week ${{ steps.get-week.outputs.week }}"
+        
+        response=$(curl -s -X POST "${{ secrets.SUPABASE_FUNCTION_URL }}" \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+          -d '{
+            "week_number": ${{ steps.get-week.outputs.week }},
+            "league_id": "${{ github.event.inputs.league_id || 'd06f0672-2848-4b5d-86f5-9ab559605b4f' }}"
+          }')
+        
+        echo "Function Response:"
+        echo "$response"
+        
+        # Check if the response contains an error
+        if echo "$response" | grep -q '"error"'; then
+          echo "âŒ Error processing fees"
+          echo "$response"
+          exit 1
+        else
+          echo "âœ… Fees processed successfully"
+        fi
+    
+    - name: Create Processing Summary
+      if: success()
+      run: |
+        echo "## í¿ˆ Week ${{ steps.get-week.outputs.week }} Fee Processing Complete" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- **League ID**: ${{ github.event.inputs.league_id || 'd06f0672-2848-4b5d-86f5-9ab559605b4f' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Week Number**: ${{ steps.get-week.outputs.week }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Processed At**: $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Status**: âœ… Success" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check your Discord channel for the fee summary!" >> $GITHUB_STEP_SUMMARY
+    
+    - name: Notify on Failure
+      if: failure()
+      run: |
+        echo "## âŒ Week ${{ steps.get-week.outputs.week }} Fee Processing Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- **League ID**: ${{ github.event.inputs.league_id || 'd06f0672-2848-4b5d-86f5-9ab559605b4f' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Week Number**: ${{ steps.get-week.outputs.week }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Failed At**: $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check the logs above for error details." >> $GITHUB_STEP_SUMMARY
