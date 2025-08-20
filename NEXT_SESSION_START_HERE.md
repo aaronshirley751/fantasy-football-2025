@@ -14,7 +14,7 @@ Execute this command to see what Sleeper league ID is actually stored:
 cd "C:/Users/tasms/my-new-project/Fantasy Football 2025/fantasy-fee-tracker"
 
 curl -X POST "https://jfeuobfjgqownybluvje.supabase.co/functions/v1/debug-league" \
-  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpmeXNnZGJkYXNkZmFzZGZhZGFzZSIsInJvbGUiOiJzZXJ2aWNlX3JvbGUiLCJpYXQiOjE3MzQzODA1NzMsImV4cCI6MjA0OTk1NjU3M30.tkoyTGLpvKyBZu3SdHo4-eC4q1pPo7euxczDRh5sUy8" \
+  -H "Authorization: Bearer [SERVICE_ROLE_KEY]" \
   -H "Content-Type: application/json" \
   -d '{"league_id": "d06f0672-2848-4b5d-86f5-9ab559605b4f"}'
 ```
