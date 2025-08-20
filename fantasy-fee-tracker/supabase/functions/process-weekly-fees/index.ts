@@ -82,6 +82,16 @@ Deno.serve(async (req) => {
       throw new Error('League not found')
     }
 
+    console.log('League configuration:', league)
+
+    // Return the league configuration for debugging
+    if (req.headers.get('debug') === 'true') {
+      return new Response(
+        JSON.stringify({ league_config: league, sleeper_league_id: league.sleeper_league_id }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
     // Fetch data from Sleeper API
     const sleeperData = await fetchSleeperData(league.sleeper_league_id, week_number)
     
@@ -112,21 +122,27 @@ Deno.serve(async (req) => {
 async function fetchSleeperData(leagueId: string, weekNumber: number) {
   const baseUrl = 'https://api.sleeper.app/v1'
   
+  console.log(`Fetching Sleeper data for league: ${leagueId}, week: ${weekNumber}`)
+  
   // Fetch matchups
   const matchupsRes = await fetch(`${baseUrl}/league/${leagueId}/matchups/${weekNumber}`)
   const matchups = await matchupsRes.json()
+  console.log(`Matchups response (${matchupsRes.status}):`, matchups)
   
   // Fetch rosters
   const rostersRes = await fetch(`${baseUrl}/league/${leagueId}/rosters`)
   const rosters = await rostersRes.json()
+  console.log(`Rosters response (${rostersRes.status}):`, rosters)
   
   // Fetch users
   const usersRes = await fetch(`${baseUrl}/league/${leagueId}/users`)
   const users = await usersRes.json()
+  console.log(`Users response (${usersRes.status}):`, users)
   
   // Fetch transactions
   const transactionsRes = await fetch(`${baseUrl}/league/${leagueId}/transactions/${weekNumber}`)
   const transactions = await transactionsRes.json()
+  console.log(`Transactions response (${transactionsRes.status}):`, transactions)
   
   return { matchups, rosters, users, transactions }
 }
