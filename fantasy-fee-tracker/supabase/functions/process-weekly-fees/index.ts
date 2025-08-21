@@ -106,7 +106,7 @@ Deno.serve(async (req) => {
     const userMappings = await createUserMappings(supabase, sleeperData, league_id)
     
     // Get transaction stats for free transaction logic
-    const transactionStats = await getTransactionStats(supabase, league_id, league.free_transactions_per_season || 5)
+    const transactionStats = await getTransactionStats(supabase, league_id, league.free_transactions_per_season || 10)
     
     // Process matchups and calculate fees
     const fees = await processMatchupsAndFees(supabase, league, sleeperData, week_number, userMappings, transactionStats)
@@ -365,7 +365,7 @@ async function processMatchupsAndFees(
   
   // Process transactions with free transaction logic
   for (const transaction of transactions || []) {
-    if (['waiver', 'free_agent', 'trade'].includes(transaction.type)) {
+    if (['waiver', 'free_agent'].includes(transaction.type)) {
       const rosterId = transaction.roster_ids?.[0]
       const ownerName = userMap.get(rosterId) || `Team ${rosterId}`
       const rosterStats = statsMap.get(rosterId)
@@ -404,6 +404,28 @@ async function processMatchupsAndFees(
           owner_name: ownerName
         })
       }
+    } else if (transaction.type === 'trade') {
+      // Trades are always free - just track them without fees
+      const rosterId = transaction.roster_ids?.[0]
+      const ownerName = userMap.get(rosterId) || `Team ${rosterId}`
+      
+      await supabase.from('transactions').upsert({
+        league_id: league.id,
+        sleeper_transaction_id: transaction.transaction_id,
+        roster_id: rosterId,
+        type: transaction.type,
+        week_number: weekNumber,
+        fee_amount: 0, // Trades are always free
+        processed: true
+      }, { onConflict: 'sleeper_transaction_id' })
+      
+      fees.push({
+        roster_id: rosterId,
+        type: 'free_trade',
+        amount: 0,
+        description: `[FREE] Trade transaction`,
+        owner_name: ownerName
+      })
     }
   }
   

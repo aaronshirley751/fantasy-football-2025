@@ -44,6 +44,31 @@ Deno.serve(async (req) => {
       )
     }
 
+    if (action === 'update_free_transactions') {
+      // Update the league to set free_transactions_per_season to 10
+      const { data: league, error: leagueError } = await supabase
+        .from('leagues')
+        .update({
+          free_transactions_per_season: 10
+        })
+        .eq('id', 'd06f0672-2848-4b5d-86f5-9ab559605b4f')
+        .select()
+        .single()
+
+      if (leagueError) {
+        throw new Error(`Failed to update free transactions: ${leagueError.message}`)
+      }
+
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          message: 'Free transactions per season updated to 10',
+          league: league
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
     // Default: Check database state
     const { data: allLeagues, error: allLeaguesError } = await supabase
       .from('leagues')
