@@ -19,12 +19,12 @@ Deno.serve(async (req) => {
     const { action } = await req.json()
     
     if (action === 'setup_league') {
-      // Update the existing league record with our actual Sleeper ID
+      // Update the existing league record with the 2024 league ID that has actual historical data
       const { data: league, error: leagueError } = await supabase
         .from('leagues')
         .update({
-          sleeper_league_id: '1132525877644017664',
-          league_name: 'Fantasy Football 2025 - Updated'
+          sleeper_league_id: '1124838170135900160', // 2024 completed league with real data
+          league_name: 'Fantasy Football 2024 - Historical Testing'
         })
         .eq('id', 'd06f0672-2848-4b5d-86f5-9ab559605b4f')
         .select()
@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
       return new Response(
         JSON.stringify({ 
           success: true, 
-          message: 'League updated successfully with correct Sleeper ID',
+          message: 'League updated successfully with 2024 historical data league ID',
           league: league
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
