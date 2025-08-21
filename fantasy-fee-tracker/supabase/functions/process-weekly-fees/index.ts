@@ -158,6 +158,12 @@ async function createUserMappings(supabase: any, sleeperData: any, leagueId: str
   const { users, rosters } = sleeperData
   const mappings: UserMapping[] = []
   
+  // Check if data is available (might be null for future weeks)
+  if (!rosters || !users) {
+    console.log('Rosters or users data not available - this is normal for future weeks')
+    return mappings
+  }
+  
   // Create mapping between rosters and users
   rosters.forEach((roster: any) => {
     const user = users.find((u: any) => u.user_id === roster.owner_id)
@@ -243,6 +249,12 @@ async function processMatchupsAndFees(
 ) {
   const fees: FeeData[] = []
   const { matchups, rosters, users, transactions } = sleeperData
+  
+  // Check if matchup data is available (might be null for future weeks)
+  if (!matchups || !Array.isArray(matchups)) {
+    console.log('Matchup data not available - this is normal for future weeks')
+    return { fees: [], highScorer: null }
+  }
   
   // Create user mapping lookup for quick access
   const userMap = new Map()
