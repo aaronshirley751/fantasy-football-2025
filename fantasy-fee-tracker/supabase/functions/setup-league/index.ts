@@ -19,31 +19,25 @@ Deno.serve(async (req) => {
     const { action } = await req.json()
     
     if (action === 'setup_league') {
-      // Create the main league record
+      // Update the existing league record with our actual Sleeper ID
       const { data: league, error: leagueError } = await supabase
         .from('leagues')
-        .insert({
-          id: 'd06f0672-2848-4b5d-86f5-9ab559605b4f',
-          name: 'Fantasy Football 2025',
+        .update({
           sleeper_league_id: '1132525877644017664',
-          loss_fee: 5.00,
-          inactive_player_fee: 2.00,
-          transaction_fee: 1.00,
-          discord_webhook_url: Deno.env.get('DISCORD_WEBHOOK_URL'),
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
+          league_name: 'Fantasy Football 2025 - Updated'
         })
+        .eq('id', 'd06f0672-2848-4b5d-86f5-9ab559605b4f')
         .select()
         .single()
 
       if (leagueError) {
-        throw new Error(`Failed to create league: ${leagueError.message}`)
+        throw new Error(`Failed to update league: ${leagueError.message}`)
       }
 
       return new Response(
         JSON.stringify({ 
           success: true, 
-          message: 'League created successfully',
+          message: 'League updated successfully with correct Sleeper ID',
           league: league
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
