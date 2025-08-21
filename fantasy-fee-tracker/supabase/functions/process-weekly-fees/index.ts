@@ -84,6 +84,13 @@ Deno.serve(async (req) => {
 
     console.log('League configuration:', league)
 
+    console.log('League fees configuration:', {
+        loss_fee: league.loss_fee,
+        inactive_player_fee: league.inactive_player_fee,
+        high_score_bonus: league.high_score_bonus,
+        free_transactions_per_season: league.free_transactions_per_season
+    })
+
     // Return the league configuration for debugging
     if (req.headers.get('debug') === 'true') {
       return new Response(
