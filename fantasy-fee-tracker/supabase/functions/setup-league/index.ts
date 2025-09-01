@@ -16,7 +16,65 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    const { action } = await req.json()
+    const { action, league_id_2025 } = await req.json()
+    
+    if (action === 'setup_2025_league') {
+      // Clear all test data first
+      console.log('🧹 Clearing test data...')
+      
+      // Clear transactions
+      await supabase.from('transactions').delete().eq('league_id', 'd06f0672-2848-4b5d-86f5-9ab559605b4f')
+      
+      // Clear matchups
+      await supabase.from('matchups').delete().eq('league_id', 'd06f0672-2848-4b5d-86f5-9ab559605b4f')
+      
+      // Clear inactive penalties
+      await supabase.from('inactive_penalties').delete().eq('league_id', 'd06f0672-2848-4b5d-86f5-9ab559605b4f')
+      
+      // Clear fee summary
+      await supabase.from('fee_summary').delete().eq('league_id', 'd06f0672-2848-4b5d-86f5-9ab559605b4f')
+      
+      // Clear users (will be repopulated from 2025 league)
+      await supabase.from('users').delete().eq('league_id', 'd06f0672-2848-4b5d-86f5-9ab559605b4f')
+      
+      console.log('✅ Test data cleared')
+      
+      // Update league to 2025 configuration
+      if (!league_id_2025) {
+        return new Response(
+          JSON.stringify({ 
+            error: 'league_id_2025 parameter required',
+            message: 'Please provide the 2025 Sleeper league ID'
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+        )
+      }
+      
+      const { data: league, error: leagueError } = await supabase
+        .from('leagues')
+        .update({
+          sleeper_league_id: league_id_2025,
+          league_name: 'Fantasy Football 2025 - Live Season',
+          free_transactions_per_season: 10
+        })
+        .eq('id', 'd06f0672-2848-4b5d-86f5-9ab559605b4f')
+        .select()
+        .single()
+
+      if (leagueError) {
+        throw new Error(`Failed to update league: ${leagueError.message}`)
+      }
+
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          message: `League updated successfully for 2025 season with league ID: ${league_id_2025}`,
+          league: league,
+          cleared_tables: ['transactions', 'matchups', 'inactive_penalties', 'fee_summary', 'users']
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
     
     if (action === 'setup_league') {
       // Update the existing league record with the 2024 league ID that has actual historical data
