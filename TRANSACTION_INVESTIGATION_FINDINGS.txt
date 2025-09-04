@@ -1,0 +1,81 @@
+DETAILED TRANSACTION AUDIT - 2025 FANTASY FOOTBALL LEAGUE
+League ID: 1249067741470539776
+Analysis Date: September 3, 2025
+================================================================================
+
+🔍 SALADBAR751 (ROSTER 1) - YOUR TEAM - DETAILED TRANSACTION AUDIT
+================================================================================
+
+❌ CRITICAL FINDING: All 14 transactions are DROPS ONLY (no adds)
+This suggests these are roster cleanup/purge transactions, not typical waiver wire activity.
+
+Transaction Details for SaladBar751 (Roster 1):
+-----------------------------------------------
+All transactions occurred on 8/22/2025 between 12:25-12:26 PM (1-minute window)
+Creator ID: 856433161003970560 (matches your user ID as owner)
+
+1. 12:26:47 PM - Drop: Player 9484 (no add)
+2. 12:26:44 PM - Drop: Player 7525 (no add)  
+3. 12:26:40 PM - Drop: Player 4037 (no add)
+4. 12:26:36 PM - Drop: Player 1426 (no add)
+5. 12:26:30 PM - Drop: Player 5892 (no add)
+6. 12:26:26 PM - Drop: Player 9758 (no add)
+7. 12:26:19 PM - Drop: Player PIT (Defense, no add)
+8. 12:26:14 PM - Drop: Player 6801 (no add)
+9. 12:26:10 PM - Drop: Player 9756 (no add)
+10. 12:26:05 PM - Drop: Player 5012 (no add)
+11. 12:25:57 PM - Drop: Player 5947 (no add)
+12. 12:25:52 PM - Drop: Player 2216 (no add)
+13. 12:25:46 PM - Drop: Player 9753 (no add)
+14. 12:25:36 PM - Drop: Player 4892 (no add)
+
+🚨 ANALYSIS: POTENTIAL ROSTER MANAGEMENT ISSUE
+================================================================================
+
+KEY OBSERVATIONS:
+1. All 14 transactions are "free_agent" type but only involve DROPS
+2. All occurred within a 1-minute window on 8/22/2025
+3. No corresponding "adds" - just mass player drops
+4. This pattern suggests roster cleanup/purge activity
+
+QUESTIONS FOR INVESTIGATION:
+1. Were these legitimate roster cleanup drops?
+2. Should "drop-only" transactions count toward the 10 free limit?
+3. Was this part of post-draft roster management?
+4. Are these correctly classified as "free_agent" transactions?
+
+COMPARISON WITH OTHER TEAMS:
+================================================================================
+
+Roster 2 (Turd_Ferguson24): 14 similar drop-only transactions on 8/21/2025
+Roster 6 (Watts52): Mix of normal add/drop transactions 
+Roster 7 (tscotty85): Mix of normal add/drop transactions
+
+BUSINESS LOGIC QUESTION:
+================================================================================
+
+Should the fee system count "drop-only" transactions toward the 10 free limit?
+
+Arguments FOR counting them:
+- They are processed through the waiver/free agent system
+- They free up roster spots which has strategic value
+- Sleeper API classifies them as "free_agent" type
+
+Arguments AGAINST counting them:
+- No actual player acquisition occurred
+- May be post-draft roster cleanup
+- Different from typical waiver wire activity
+
+RECOMMENDATION:
+================================================================================
+
+1. IMMEDIATE: Clarify with league rules whether drop-only transactions count
+2. If they DON'T count: Update fee logic to only count transactions with "adds"
+3. If they DO count: Current calculation is correct ($8 owed per team)
+
+UPDATED FEE CALCULATION (if drop-only transactions don't count):
+- SaladBar751: 0 add transactions = $0 owed ✅
+- Turd_Ferguson24: 0 add transactions = $0 owed ✅  
+- All other teams: No fees owed ✅
+
+Would result in $0 total fees for pre-season.
