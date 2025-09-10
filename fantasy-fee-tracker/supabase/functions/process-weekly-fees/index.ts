@@ -109,14 +109,14 @@ Deno.serve(async (req) => {
     const transactionStats = await getTransactionStats(supabase, league_id, league.free_transactions_per_season || 10, sleeperData.transactions)
     
     // Process matchups and calculate fees
-    const fees = await processMatchupsAndFees(supabase, league, sleeperData, week_number, userMappings, transactionStats)
+    const { fees, highScorer, userMap } = await processMatchupsAndFees(supabase, league, sleeperData, week_number, userMappings, transactionStats)
     
-    // Send Discord notification
-    await sendDiscordNotification(league.discord_webhook_url, fees, week_number)
-    console.log('✅ Discord notification sent successfully')
+    // Send Discord notification with fixed high scorer name
+    await sendDiscordNotification(league.discord_webhook_url, { fees, highScorer }, week_number, userMap!)
+    console.log('✅ Discord notification sent successfully with corrected high scorer name')
 
     return new Response(
-      JSON.stringify({ success: true, fees }),
+      JSON.stringify({ success: true, fees: { fees, highScorer } }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   } catch (error) {
@@ -466,7 +466,7 @@ async function processMatchupsAndFees(
     }
   }
   
-  return { fees, highScorer }
+  return { fees, highScorer, userMap }
 }
 
 function checkInactivePlayers(matchup: any): string[] {
@@ -521,7 +521,7 @@ async function updateFeeSummary(supabase: any, leagueId: string, rosterId: numbe
   }
 }
 
-async function sendDiscordNotification(webhookUrl: string, data: any, weekNumber: number) {
+async function sendDiscordNotification(webhookUrl: string, data: any, weekNumber: number, userMap: Map<number, string>) {
   const { fees, highScorer } = data
   
   // Group fees by roster
@@ -549,9 +549,8 @@ async function sendDiscordNotification(webhookUrl: string, data: any, weekNumber
   
   // Add high scorer
   if (highScorer) {
-    // Find owner name for high scorer
-    const highScorerFee = fees.find((f: FeeData) => f.roster_id === highScorer.roster_id)
-    const highScorerName = highScorerFee?.owner_name || `Team ${highScorer.roster_id}`
+    // FIXED: Use userMap for accurate owner name instead of searching fees
+    const highScorerName = userMap.get(highScorer.roster_id) || `Team ${highScorer.roster_id}`
     
     embed.fields.push({
       name: '🏆 Highest Scorer',
