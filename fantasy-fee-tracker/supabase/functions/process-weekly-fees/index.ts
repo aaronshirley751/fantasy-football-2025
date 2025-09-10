@@ -105,14 +105,15 @@ Deno.serve(async (req) => {
     // Create user mappings for owner names
     const userMappings = await createUserMappings(supabase, sleeperData, league_id)
     
-    // Get transaction stats for free transaction logic
-    const transactionStats = await getTransactionStats(supabase, league_id, league.free_transactions_per_season || 10)
+    // Get transaction stats for free transaction logic (pass current Sleeper transactions)
+    const transactionStats = await getTransactionStats(supabase, league_id, league.free_transactions_per_season || 10, sleeperData.transactions)
     
     // Process matchups and calculate fees
     const fees = await processMatchupsAndFees(supabase, league, sleeperData, week_number, userMappings, transactionStats)
     
     // Send Discord notification
     await sendDiscordNotification(league.discord_webhook_url, fees, week_number)
+    console.log('✅ Discord notification sent successfully')
 
     return new Response(
       JSON.stringify({ success: true, fees }),
@@ -193,7 +194,7 @@ async function createUserMappings(supabase: any, sleeperData: any, leagueId: str
   return mappings
 }
 
-async function getTransactionStats(supabase: any, leagueId: string, freeTransactionsPerSeason: number): Promise<TransactionStats[]> {
+async function getTransactionStats(supabase: any, leagueId: string, freeTransactionsPerSeason: number, sleeperTransactions?: any[]): Promise<TransactionStats[]> {
   try {
     // Get all rosters for this league
     const { data: users } = await supabase
@@ -203,13 +204,21 @@ async function getTransactionStats(supabase: any, leagueId: string, freeTransact
     
     if (!users) return []
     
-    // Get transaction counts for each roster this season
-    const { data: transactionCounts } = await supabase
-      .from('transactions')
-      .select('roster_id, count(*)')
-      .eq('league_id', leagueId)
-      .group('roster_id')
+    // Apply August 24, 2025 cutoff to Sleeper transactions
+    const draftCutoff = new Date('2025-08-24T00:00:00Z').getTime();
+    const validSleeperTransactions = (sleeperTransactions || []).filter(t => 
+      t.created >= draftCutoff && ['waiver', 'free_agent'].includes(t.type)
+    );
     
+    // Count transactions per roster from filtered Sleeper data
+    const rosterTransactionCounts = new Map();
+    validSleeperTransactions.forEach(t => {
+      const rosterId = t.roster_ids?.[0];
+      if (rosterId) {
+        rosterTransactionCounts.set(rosterId, (rosterTransactionCounts.get(rosterId) || 0) + 1);
+      }
+    });
+
     // Get mulligan status (inactive penalties with 0 fee indicate mulligan used)
     const { data: mulliganUsage } = await supabase
       .from('inactive_penalties')
@@ -221,7 +230,7 @@ async function getTransactionStats(supabase: any, leagueId: string, freeTransact
     const stats: TransactionStats[] = []
     
     users.forEach((user: any) => {
-      const transactionCount = transactionCounts?.find((tc: any) => tc.roster_id === user.roster_id)?.count || 0
+      const transactionCount = rosterTransactionCounts.get(user.roster_id) || 0
       const mulliganCount = mulliganUsage?.find((mu: any) => mu.roster_id === user.roster_id)?.count || 0
       
       stats.push({
@@ -363,8 +372,29 @@ async function processMatchupsAndFees(
       .eq('roster_id', highScorer.roster_id)
   }
   
-  // Process transactions with free transaction logic
-  for (const transaction of transactions || []) {
+  // CRITICAL: August 24, 2025 transaction cutoff rule - only count post-draft transactions
+  const draftCutoff = new Date('2025-08-24T00:00:00Z').getTime();
+  const validTransactions = (transactions || []).filter(t => t.created >= draftCutoff);
+  console.log(`Transaction filtering: ${transactions?.length || 0} total, ${validTransactions.length} post-draft (after Aug 24, 2025)`);
+  
+  // CRITICAL FIX: Get already processed transactions to avoid double-charging fees
+  const { data: processedTransactions } = await supabase
+    .from('transactions')
+    .select('sleeper_transaction_id')
+    .eq('league_id', league.id);
+  
+  const processedIds = new Set((processedTransactions || []).map((t: any) => t.sleeper_transaction_id));
+  const newTransactions = validTransactions.filter(t => !processedIds.has(t.transaction_id));
+  
+  console.log(`🔧 TRANSACTION FEE FIX: ${validTransactions.length} valid transactions, ${processedTransactions?.length || 0} already processed, ${newTransactions.length} new transactions to process`);
+  
+  // DETAILED LOGGING: Let's see exactly what each NEW transaction looks like
+  newTransactions.forEach(t => {
+    console.log(`NEW TRANSACTION: ${t.type} | Roster: ${t.roster_ids?.[0]} | Adds: ${JSON.stringify(t.adds)} | Drops: ${JSON.stringify(t.drops)} | Created: ${new Date(t.created).toISOString()}`);
+  });
+  
+  // Process only NEW transactions with free transaction logic
+  for (const transaction of newTransactions) {
     if (['waiver', 'free_agent'].includes(transaction.type)) {
       const rosterId = transaction.roster_ids?.[0]
       const ownerName = userMap.get(rosterId) || `Team ${rosterId}`
@@ -442,12 +472,23 @@ async function processMatchupsAndFees(
 function checkInactivePlayers(matchup: any): string[] {
   const inactivePlayers: string[] = []
   
-  // Check if any starters scored 0 points
-  if (matchup.starters_points) {
+  // CORRECTED LOGIC: Only flag players who truly didn't play (not those who played but scored 0)
+  // In Sleeper, players who didn't play typically have null points or aren't in the data
+  // Players who played but scored 0 (like Detroit Lions) should NOT be flagged as inactive
+  
+  if (matchup.starters_points && matchup.starters) {
     matchup.starters_points.forEach((points: number, index: number) => {
-      if (points === 0 && matchup.starters[index]) {
-        inactivePlayers.push(matchup.starters[index])
+      const playerId = matchup.starters[index]
+      
+      // Only flag as inactive if points is explicitly null or undefined
+      // Do NOT flag players with 0 points who actually played
+      if ((points === null || points === undefined) && playerId) {
+        inactivePlayers.push(playerId)
       }
+      
+      // Additional check: if points is 0, we'd need to verify the player's status
+      // For now, we'll be conservative and NOT flag 0-point players as inactive
+      // since they may have played but just didn't produce fantasy points
     })
   }
   

@@ -3,14 +3,16 @@
 ## Overview
 This project is a **production-ready Fantasy Football fee tracker** built using Supabase Edge Functions and Deno. It integrates with the Sleeper API to process weekly fees, calculate penalties, and send rich Discord notifications with automated GitHub Actions workflows. The system has been validated with real league data processing $99.00 in actual fees.
 
+**CRITICAL STATUS (September 9, 2025)**: System is production-ready but requires authentication resolution and 2025 league transition to begin live operation. Automated scheduling is SAFELY DISABLED to prevent test data execution.
+
 ## Architecture & Key Components
 - **Supabase Edge Functions**: Located in `fantasy-fee-tracker/supabase/functions/`. Three main functions:
   - `process-weekly-fees/`: Core fee processing logic (552 lines, Version 6 deployed)
-  - `setup-league/`: League configuration management 
+  - `setup-league/`: League configuration management with 2025 transition capability
   - `debug-league/`: Development and testing utilities
 - **Database**: PostgreSQL with enhanced schema supporting owner mapping, transaction tracking, and mulligan system
 - **External APIs**: Sleeper API for league data + Discord webhooks for rich notifications
-- **Automation**: GitHub Actions with weekly scheduling and manual triggers
+- **Automation**: GitHub Actions with weekly scheduling (CURRENTLY DISABLED) and manual triggers
 
 ## Project Structure
 ```
@@ -18,16 +20,29 @@ Fantasy Football 2025/
 ├── .github/
 │   ├── copilot-instructions.md
 │   └── workflows/
-│       └── weekly-fee-processing.yml    # Automated scheduling (16+ successful runs)
+│       └── weekly-fee-processing.yml    # Automated scheduling (DISABLED for safety)
+├── SESSION_SUMMARY_2025-09-04.md       # Latest session findings & transaction analysis
+├── TRANSACTION_INVESTIGATION_FINDINGS.txt # Critical transaction audit results
+├── count_transactions.js               # Transaction analysis tools
+├── post_draft_transaction_analysis.js  # August 24 cutoff analysis
 └── fantasy-fee-tracker/
     ├── supabase/
     │   ├── config.toml
     │   └── functions/
     │       ├── process-weekly-fees/     # Main function (552 lines)
-    │       ├── setup-league/            # Configuration management
+    │       ├── setup-league/            # Configuration management + 2025 setup
     │       └── debug-league/           # Testing utilities
-    └── README.md
+    └── README.md                        # Current production status & action plan
 ```
+
+## 2025 Season Transition Status (CRITICAL)
+### Current State (September 9, 2025)
+- **Live League ID**: `1249067741470539776` (verified active, in_season, 10 teams)
+- **Test League ID**: `d06f0672-2848-4b5d-86f5-9ab559605b4f` (2024 historical data, $99 validation)
+- **Database**: Still configured with test data - needs transition
+- **GitHub Actions**: SAFELY DISABLED to prevent test data execution during live season
+- **Authentication**: Requires Supabase ANON_KEY or SERVICE_ROLE_KEY for production execution
+- **Transaction Cutoff**: August 24, 2025 rule established (only post-draft transactions count)
 
 ## Enhanced Features (All Production-Ready)
 ### 1. **Owner Name Attribution System**
@@ -67,9 +82,23 @@ npx supabase functions deploy debug-league
 npx supabase functions serve process-weekly-fees
 ```
 
-### Testing Production Function
+### 2025 Season Transition (CRITICAL NEXT STEPS)
 ```bash
-# Test with real league data (Week 16 validated with $99.00 fees)
+# 1. Execute database transition to 2025 league (requires authentication token)
+curl -X POST 'https://jfeuobfjgqownybluvje.supabase.co/functions/v1/setup-league' \
+  -H 'Authorization: Bearer [ANON_KEY or SERVICE_ROLE_KEY]' \
+  -H 'Content-Type: application/json' \
+  -d '{"action": "setup_2025_league", "league_id": "1249067741470539776"}'
+
+# 2. Test Week 1 processing with live league
+curl -X POST 'https://jfeuobfjgqownybluvje.supabase.co/functions/v1/process-weekly-fees' \
+  -H 'Authorization: Bearer [TOKEN]' \
+  -d '{"league_id": "1249067741470539776", "week": 1}'
+```
+
+### Testing Production Function (Historical Validation)
+```bash
+# Test with validated 2024 historical data (Week 16 validated with $99.00 fees)
 curl -X POST https://jfeuobfjgqownybluvje.supabase.co/functions/v1/process-weekly-fees \
   -H "Authorization: Bearer [ANON_KEY]" \
   -H "Content-Type: application/json" \
@@ -141,17 +170,26 @@ if (['waiver', 'free_agent'].includes(transaction.type)) {
 }
 ```
 
+### August 24, 2025 Transaction Cutoff Rule (CRITICAL)
+```typescript
+// Only count transactions after August 24, 2025 (post-draft)
+const draftCutoff = new Date('2025-08-24T00:00:00Z').getTime();
+const validTransactions = transactions.filter(t => t.created >= draftCutoff);
+```
+
 ## Environment Variables & Configuration
 - `SUPABASE_URL`: Project URL for database connection
 - `SUPABASE_SERVICE_ROLE_KEY`: Service role key for full database access
 - **Production Project**: `jfeuobfjgqownybluvje`
-- **League ID**: `d06f0672-2848-4b5d-86f5-9ab559605b4f` (2024 historical data for validation)
+- **Test League ID**: `d06f0672-2848-4b5d-86f5-9ab559605b4f` (2024 historical data for validation)
+- **Live League ID**: `1249067741470539776` (2025 active league - not yet configured in database)
 
 ## GitHub Actions Integration
 - **Scheduled**: Every Tuesday 2 AM EST (after Monday Night Football)
 - **Manual triggers**: Support week number input via `workflow_dispatch`
 - **Success rate**: 16+ consecutive successful runs validated
 - **Error handling**: Comprehensive logging with Discord notifications
+- **SAFETY STATUS**: Cron schedule currently DISABLED to prevent test data execution during live season
 
 ## Common Development Patterns
 - **Import structure**: Use `/// <reference path="./types.d.ts" />` for custom types

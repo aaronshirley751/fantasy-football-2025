@@ -1,9 +1,9 @@
 name: Weekly Fantasy Football Fee Processing
 
 on:
-  # TEMPORARILY DISABLED - Run every Tuesday at 2 AM EST (after Monday Night Football)
-  # schedule:
-  #   - cron: '0 7 * * 2'  # 7 AM UTC = 2 AM EST during standard time
+  # Run every Tuesday at 2 AM EST (after Monday Night Football)
+  schedule:
+    - cron: '0 7 * * 2'  # 7 AM UTC = 2 AM EST during standard time
   
   # Allow manual triggering with week number input
   workflow_dispatch:
@@ -14,9 +14,9 @@ on:
         default: '1'
         type: string
       league_id:
-        description: 'League ID (leave default)'
+        description: 'League ID (leave default for 2025 live league)'
         required: false
-        default: 'd06f0672-2848-4b5d-86f5-9ab559605b4f'
+        default: '1249067741470539776'
         type: string
 
 jobs:

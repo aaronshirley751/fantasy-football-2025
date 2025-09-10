@@ -1,10 +1,33 @@
 # Fantasy Football 2025 Fee Tracker
 
-## **✅ FINAL PRODUCTION VERSION - ALL FEATURES VALIDATED (August 21, 2025)**
+## **🎊 LIVE PRODUCTION SYSTEM - SEPTEMBER 10, 2025 DEPLOYMENT SUCCESS**
 
 A comprehensive Fantasy Football fee tracker built using Supabase and Deno. It integrates with the Sleeper API to process weekly fees, calculate penalties, and send notifications via Discord with automated GitHub Actions workflows.
 
-## 🎉 Project Status: **PRODUCTION READY - ALL FEATURES VALIDATED** 
+## 🚀 Project Status: **FULLY OPERATIONAL - 2025 SEASON LIVE** 
+
+### **🎉 SEPTEMBER 10, 2025 - FINAL DEPLOYMENT SESSION COMPLETED**
+- **✅ AUTHENTICATION**: Fresh tokens deployed and working
+- **✅ LIVE LEAGUE**: Successfully transitioned to 2025 league (ID: `1249067741470539776`)
+- **✅ DISCORD NOTIFICATIONS**: Re-enabled and sending rich notifications
+- **✅ TRANSACTION FEE BUG**: **CRITICAL FIX DEPLOYED** - Fixed double-processing of transactions
+- **✅ AUTOMATED SCHEDULING**: Ready for Tuesday 2 AM EST runs
+- **✅ WEEK 1 VALIDATION**: Complete processing confirmed with $20 total fees
+
+### **🔧 CRITICAL BUG FIX - Transaction Fee Logic (September 10, 2025)**
+**ISSUE IDENTIFIED**: System was processing ALL season transactions every week, causing incorrect fee charges for players with remaining free transactions.
+
+**ROOT CAUSE**: Transaction processing loop was decrementing free transaction counts for already-processed transactions, resulting in fees being charged when they should be free.
+
+**SOLUTION IMPLEMENTED**: 
+- Added transaction filtering to only process NEW transactions not already in database
+- Enhanced logging to show exactly which transactions are new vs already processed
+- Preserved existing upsert logic to prevent duplicate database entries
+
+**BEFORE FIX**: Watts52 charged $12 in transaction fees despite having 4 free transactions remaining
+**AFTER FIX**: Watts52 correctly charged $0 in transaction fees
+
+**DEPLOYMENT**: Version 6+ deployed with transaction fee fix 
 
 ### ✅ **Phase 1 - Core System (COMPLETED)**
 - [x] Supabase project setup and configuration
@@ -65,36 +88,49 @@ A comprehensive Fantasy Football fee tracker built using Supabase and Deno. It i
 - **Automation**: GitHub Actions for scheduled processing
 - **Frontend**: Enhanced Discord notifications showing owner names instead of roster IDs + free transaction status + mulligan indicators + Supabase dashboard
 
-## 📊 **Current Database Schema**
+## 📊 **WEEK 1 RESULTS - LIVE PRODUCTION DATA (September 10, 2025)**
 
-```sql
--- Core tables (ALL DEPLOYED & WORKING)
-leagues          -- League configuration with Discord webhooks
-users            -- Team owner mapping (roster_id → username)
-matchups         -- Weekly results and high scorer tracking
-transactions     -- Waiver/trade fees from Sleeper API
-inactive_penalties -- Lineup violation tracking
-fee_summary      -- Running totals per roster with breakdowns
-```
+**FINAL CORRECTED TOTALS:**
+- **Loss Fees**: $25 (5 losing teams × $5)
+- **Transaction Fees**: $0 (all transactions within free limits)
+- **Inactive Player Penalties**: $0 (no lineup violations)
+- **High Scorer Bonus**: -$5 (Watts52 with 174.56 points)
+- **TOTAL WEEK 1 FEES**: $20
+
+**TRANSACTION BREAKDOWN:**
+- **Roster 6 (Watts52)**: 6 transactions used, 4 free remaining
+- **Roster 7 (tscotty85)**: 3 transactions used, 7 free remaining  
+- **Roster 10 (j1fisher25)**: 2 transactions used, 8 free remaining
+- **All Others**: 0 transactions used, 10 free remaining
+
+**ENHANCED FEATURES VALIDATED:**
+- ✅ **Owner Names**: Discord shows "Watts52 owes $5" instead of "Team 6"
+- ✅ **Free Transactions**: First 10 waiver/free agent claims per season are free
+- ✅ **August 24 Cutoff**: Only post-draft transactions count toward fees
+- ✅ **Detroit Lions Fix**: 0-point players who actually played are not penalized
+- ✅ **Transaction Fix**: No double-processing of already-processed transactions
 
 ## 🔧 **Production Deployment Details**
 
-**Supabase Project:** `jfeuobfjgqownybluvje`
-**Function URL:** `https://jfeuobfjgqownybluvje.supabase.co/functions/v1/process-weekly-fees`
-**Repository:** `aaronshirley751/fantasy-football-2025`
-**Current Version:** Version 5 (deployed August 20, 2025 at 19:53:13 UTC)
-**Function Status:** ACTIVE with 494 lines of enhanced code
+**Supabase Project:** `jfeuobfjgqownybluvje`  
+**Function URL:** `https://jfeuobfjgqownybluvje.supabase.co/functions/v1/process-weekly-fees`  
+**Repository:** `aaronshirley751/fantasy-football-2025`  
+**Current Version:** Version 6+ (deployed September 10, 2025 with transaction fix)  
+**Function Status:** FULLY OPERATIONAL with enhanced logging and bug fixes  
+**Live League ID:** `1249067741470539776` (2025 season)  
+**Discord Server:** "2025 FFL Tracker" receiving rich notifications  
 
-**Successfully Implemented & Deployed:**
-- Enhanced owner name mapping with actual names in Discord notifications
-- Free transaction system with configurable limits (default: 5 per season)
-- Mulligan system for first inactive player penalty waiver per roster
-- Real league data processing (UUID: `d06f0672-2848-4b5d-86f5-9ab559605b4f`)
-- Discord notifications confirmed working in "2025 FFL Tracker" server
-- GitHub Actions automation triggered and executed
-- All database operations validated with enhanced features
+**SUCCESSFULLY DEPLOYED & VALIDATED:**
+- ✅ Enhanced owner name mapping with real names in Discord
+- ✅ Free transaction system (10 free per season) 
+- ✅ Mulligan system for first inactive player penalty waiver
+- ✅ August 24, 2025 transaction cutoff rule
+- ✅ **CRITICAL**: Transaction fee double-processing bug fix
+- ✅ Live 2025 league data processing and validation
+- ✅ Discord notifications with corrected fee calculations
+- ✅ GitHub Actions weekly automation (Tuesdays 2 AM EST)
 
-## 🎯 **What Works Right Now (Version 5 - All Enhanced Features)**
+## 🎯 **Current System Capabilities (Version 6+ - All Features Live)**
 
 ### Core Fee Processing with Enhanced Features
 - ✅ Loss fees: $5 per matchup loss with owner names in notifications

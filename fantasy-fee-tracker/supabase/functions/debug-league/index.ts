@@ -16,7 +16,59 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    const { league_id } = await req.json()
+    const { league_id, action, new_sleeper_league_id, free_transactions } = await req.json()
+    
+    // Handle update action for 2025 transition
+    if (action === 'update_sleeper_league_id' && new_sleeper_league_id) {
+      const { data: updatedLeague, error: updateError } = await supabase
+        .from('leagues')
+        .update({ sleeper_league_id: new_sleeper_league_id })
+        .eq('id', 'd06f0672-2848-4b5d-86f5-9ab559605b4f')
+        .select()
+        .single()
+      
+      if (updateError) {
+        return new Response(
+          JSON.stringify({ error: updateError.message }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+        )
+      }
+      
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          message: 'Sleeper league ID updated successfully for 2025 season',
+          updatedLeague: updatedLeague 
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+    
+    // Handle free transactions configuration update
+    if (action === 'update_free_transactions' && free_transactions !== undefined) {
+      const { data: updatedLeague, error: updateError } = await supabase
+        .from('leagues')
+        .update({ free_transactions_per_season: free_transactions })
+        .eq('id', 'd06f0672-2848-4b5d-86f5-9ab559605b4f')
+        .select()
+        .single()
+      
+      if (updateError) {
+        return new Response(
+          JSON.stringify({ error: updateError.message }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+        )
+      }
+      
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          message: `Free transactions per season updated to: ${free_transactions}`,
+          updatedLeague: updatedLeague 
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
     
     // First, check all leagues in the database
     const { data: allLeagues, error: allLeaguesError } = await supabase
