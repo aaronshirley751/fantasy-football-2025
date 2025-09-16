@@ -18,6 +18,42 @@ Deno.serve(async (req) => {
 
     const { action, league_id_2025 } = await req.json()
     
+     if (action === 'update_current_league') {
+       // Update the current league (a7d65b53-2ec5-4b38-94ee-7fcb97160989) with 2025 Sleeper league ID
+       if (!league_id_2025) {
+         return new Response(
+           JSON.stringify({ 
+             error: 'league_id_2025 parameter required',
+             message: 'Please provide the 2025 Sleeper league ID'
+           }),
+           { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+         )
+       }
+
+       const { data: league, error: leagueError } = await supabase
+         .from('leagues')
+         .update({
+           sleeper_league_id: league_id_2025,
+           league_name: 'Fantasy Football 2025 - Live Season'
+         })
+         .eq('id', 'a7d65b53-2ec5-4b38-94ee-7fcb97160989')
+         .select()
+         .single()
+
+       if (leagueError) {
+         throw new Error(`Failed to update current league: ${leagueError.message}`)
+       }
+
+       return new Response(
+         JSON.stringify({ 
+           success: true, 
+           message: `Current league updated successfully for 2025 season with league ID: ${league_id_2025}`,
+           league: league
+         }),
+         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+       )
+     }
+   
     if (action === 'setup_2025_league') {
       // Clear all test data first
       console.log('🧹 Clearing test data...')
