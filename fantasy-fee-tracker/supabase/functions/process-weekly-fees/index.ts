@@ -125,13 +125,29 @@ Deno.serve(async (req) => {
     const transactionStats = await getTransactionStats(supabase, league_id, league.free_transactions_per_season || 10)
     
     // Process matchups and calculate fees
-    const fees = await processMatchupsAndFees(supabase, league, sleeperData, week_number, userMappings, transactionStats)
-    
-    // Send Discord notification - DISABLED to prevent erroneous notifications while debugging
-    // await sendDiscordNotification(league.discord_webhook_url, fees, week_number)
+    const { fees, highScorer } = await processMatchupsAndFees(supabase, league, sleeperData, week_number, userMappings, transactionStats)
+    // Map all fee items to use only display_name
+  const feesUniform = fees.map(fee => `${fee.owner_name}: $${fee.amount} (${fee.description})`)
+
+    // Add display_name to highScorer using userMappings, keep points for Discord
+    let highScorerUniform = null;
+    let highScorerForDiscord = null;
+    if (highScorer && userMappings && Array.isArray(userMappings)) {
+      const mapping = userMappings.find((m: any) => m.roster_id === highScorer.roster_id);
+      if (mapping && mapping.display_name) {
+        highScorerUniform = `${mapping.display_name} (${highScorer.points} pts)`; // Clean string format for API
+        highScorerForDiscord = {
+          display_name: mapping.display_name,
+          points: highScorer.points
+        }; // Full object for Discord
+      }
+    }
+
+    // Send Discord notification with enhanced emojis for visual appeal
+    await sendDiscordNotification(league.discord_webhook_url, { fees: feesUniform, highScorer: highScorerForDiscord }, week_number)
 
     return new Response(
-      JSON.stringify({ success: true, fees }),
+      JSON.stringify({ success: true, fees: feesUniform, highScorer: highScorerUniform }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   } catch (error) {
@@ -519,17 +535,6 @@ async function updateFeeSummary(supabase: any, leagueId: string, rosterId: numbe
 async function sendDiscordNotification(webhookUrl: string, data: any, weekNumber: number) {
   const { fees, highScorer } = data
   
-  // Group fees by roster
-  const feesByRoster: Record<string, FeeSummary> = fees.reduce((acc: Record<string, FeeSummary>, fee: FeeData) => {
-    const rosterId = fee.roster_id.toString()
-    if (!acc[rosterId]) {
-      acc[rosterId] = { total: 0, items: [] }
-    }
-    acc[rosterId].total += fee.amount
-    acc[rosterId].items.push(fee)
-    return acc
-  }, {})
-  
   // Create Discord embed
   const embed: DiscordEmbed = {
     title: `📊 Week ${weekNumber} Fee Summary`,
@@ -542,31 +547,32 @@ async function sendDiscordNotification(webhookUrl: string, data: any, weekNumber
     timestamp: new Date().toISOString()
   }
   
-  // Add high scorer
-  if (highScorer) {
-    // Find owner name for high scorer
-    const highScorerFee = fees.find((f: FeeData) => f.roster_id === highScorer.roster_id)
-    const highScorerName = highScorerFee?.owner_name || `Team ${highScorer.roster_id}`
-    
+  // Add high scorer (matching exact format from your example)
+  if (highScorer && highScorer.display_name && highScorer.points) {
     embed.fields.push({
       name: '🏆 Highest Scorer',
-      value: `${highScorerName}: ${highScorer.points} pts\n+$${data.highScoreBonus || 5} bonus`,
+      value: `${highScorer.display_name}: ${highScorer.points} pts\n+$5 bonus`,
       inline: false
     })
   }
   
-  // Add fees summary with owner names
-  let totalWeekFees = 0
-  for (const [rosterId, feeData] of Object.entries(feesByRoster) as [string, FeeSummary][]) {
-    totalWeekFees += feeData.total
-    // Get owner name from first fee item
-    const ownerName = feeData.items[0]?.owner_name || `Team ${rosterId}`
-    
-    embed.fields.push({
-      name: `${ownerName}`,
-      value: `Fees: $${feeData.total.toFixed(2)}`,
-      inline: true
-    })
+  // Add fee summaries (matching exact format - just owner name and fee amount)
+  let totalWeekFees = 0;
+  if (fees && Array.isArray(fees)) {
+    for (const feeString of fees) {
+      // Parse fee string format: "DisplayName: $amount (description)"
+      const match = feeString.match(/^([^:]+):\s*\$(\d+(?:\.\d{2})?)\s*\((.+)\)$/);
+      if (match) {
+        const [, ownerName, amount] = match;
+        totalWeekFees += parseFloat(amount);
+        
+        embed.fields.push({
+          name: `💸 ${ownerName}`,
+          value: `Fees: $${parseFloat(amount).toFixed(2)}`,
+          inline: true
+        })
+      }
+    }
   }
   
   embed.fields.push({
