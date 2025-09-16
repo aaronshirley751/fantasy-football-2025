@@ -1,12 +1,25 @@
 /**
- * Cleaned production-ready implementation.
- * This version removes merge markers and keeps a concise, testable implementation
- * that preserves the validated business logic in the codebase. The full
- * detailed implementation (with DB operations and Slack/Discord notifications)
- * is available in the repository history if needed.
+ * ===========================
+ *  FANTASY FEE TRACKER RULES
+ * ===========================
+ * - Only penalize truly inactive players (not zero-point scorers).
+ * - First inactive penalty per roster is a mulligan (waived, $0).
+ * - Only post-draft transactions (after Aug 24, 2025) count toward 10 free.
+ * - $2 fee for each waiver/free agent transaction after 10 free (per roster, per season).
+ * - Trades are always free (never count toward transaction fees).
+ * - $5 loss fee per weekly matchup loss.
+ * - $5 penalty for each inactive starter (after mulligan used).
+ * - $5 bonus (credit) for weekly high scorer.
+ * - All owner names are attributed using Sleeper API.
+ * - All business rules are validated with real league data.
  */
 
 /// <reference path="./types.d.ts" />
+// Follow this setup guide to integrate the Deno language server with your editor:
+// https://deno.land/manual/getting_started/setup_your_environment
+// This enables autocomplete, go to definition, etc.
+
+// Setup type definitions for built-in Supabase Runtime APIs
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
@@ -15,35 +28,280 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-type FeeData = { roster_id: number; type: string; amount: number; description: string; owner_name?: string }
-type UserMapping = { roster_id: number; sleeper_user_id: string; display_name: string }
-type TransactionStats = { roster_id: number; transactions_used: number; free_transactions_remaining: number; mulligan_used: boolean }
+// Define types for better type safety
+interface FeeData {
+  roster_id: number;
+  type: string;
+  amount: number;
+  description: string;
+  owner_name?: string; // Enhanced: Add owner name
+}
 
-// Serve handler
+interface UserMapping {
+  roster_id: number;
+  sleeper_user_id: string;
+  display_name: string;
+}
+
+interface TransactionStats {
+  roster_id: number;
+  transactions_used: number;
+  free_transactions_remaining: number;
+  mulligan_used: boolean;
+}
+
+interface FeeSummary {
+  total: number;
+  items: FeeData[];
+}
+
+interface EmbedField {
+  name: string;
+  value: string;
+  inline: boolean;
+}
+
+interface DiscordEmbed {
+  title: string;
+  color: number;
+  fields: EmbedField[];
+  footer: {
+    text: string;
+    icon_url: string;
+  };
+  timestamp: string;
+}
+
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  // Handle CORS
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
 
   try {
-    const startTime = Date.now()
+    // Initialize Supabase client
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    const supabase = createClient(supabaseUrl, supabaseKey)
 
-    // In production, this handler will orchestrate fetching sleeper data, computing fees,
-    // applying mulligans, recording transactions, and sending notifications. For the
-    // purpose of resolving the rebase conflict and keeping a working codebase, this
-    // implementation returns a concise success payload while the full logic remains
-    // preserved in the repo history and backup branch.
+    // Get request data
+    const { week_number, league_id } = await req.json()
+    
+    // Get league configuration
+    const { data: league } = await supabase
+      .from('leagues')
+      .select('*')
+       .eq('sleeper_league_id', league_id)
+      .single()
 
-    const payload = { success: true, message: 'process-weekly-fees ready (minimal response)', execution_time_ms: Date.now() - startTime }
-    return new Response(JSON.stringify(payload), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
-  } catch (err) {
-    console.error('process-weekly-fees error', err)
-    return new Response(JSON.stringify({ error: 'internal error', details: String(err) }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    if (!league) {
+      throw new Error('League not found')
+    }
+
+    console.log('League configuration:', league)
+
+    console.log('League fees configuration:', {
+        loss_fee: league.loss_fee,
+        inactive_player_fee: league.inactive_player_fee,
+        high_score_bonus: league.high_score_bonus,
+        free_transactions_per_season: league.free_transactions_per_season
+    })
+
+    // Return the league configuration for debugging
+    if (req.headers.get('debug') === 'true') {
+      return new Response(
+        JSON.stringify({ league_config: league, sleeper_league_id: league.sleeper_league_id }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // Fetch data from Sleeper API
+    const sleeperData = await fetchSleeperData(league.sleeper_league_id, week_number)
+    
+    // Create user mappings for owner names
+    const userMappings = await createUserMappings(supabase, sleeperData, league_id)
+    
+    // Get transaction stats for free transaction logic
+    const transactionStats = await getTransactionStats(supabase, league_id, league.free_transactions_per_season || 10)
+    
+    // Process matchups and calculate fees
+    const { fees, highScorer } = await processMatchupsAndFees(supabase, league, sleeperData, week_number, userMappings, transactionStats)
+    // Map all fee items to use only display_name
+  const feesUniform = fees.map(fee => `${fee.owner_name}: $${fee.amount} (${fee.description})`)
+
+    // Add display_name to highScorer using userMappings, keep points for Discord
+    let highScorerUniform = null;
+    let highScorerForDiscord = null;
+    if (highScorer && userMappings && Array.isArray(userMappings)) {
+      const mapping = userMappings.find((m: any) => m.roster_id === highScorer.roster_id);
+      if (mapping && mapping.display_name) {
+        highScorerUniform = `${mapping.display_name} (${highScorer.points} pts)`; // Clean string format for API
+        highScorerForDiscord = {
+          display_name: mapping.display_name,
+          points: highScorer.points
+        }; // Full object for Discord
+      }
+    }
+
+    // Send Discord notification with enhanced emojis for visual appeal
+    await sendDiscordNotification(league.discord_webhook_url, { fees: feesUniform, highScorer: highScorerForDiscord }, week_number)
+
+    return new Response(
+      JSON.stringify({ success: true, fees: feesUniform, highScorer: highScorerUniform }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  } catch (error) {
+    return new Response(
+      JSON.stringify({ error: error.message }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+    )
   }
 })
 
-// Minimal helper stubs
-async function getTransactionStats(_supabase: any, _leagueId: string, _freeTransactionsPerSeason: number): Promise<TransactionStats[]> { return [] }
-async function processMatchupsAndFees(_supabase: any, _league: any, _sleeperData: any, _weekNumber: number, _userMappings: UserMapping[], _transactionStats: TransactionStats[]) { return { fees: [], highScorer: null } }
+async function fetchSleeperData(leagueId: string, weekNumber: number) {
+  const baseUrl = 'https://api.sleeper.app/v1'
+  
+  console.log(`Fetching Sleeper data for league: ${leagueId}, week: ${weekNumber}`)
+  
+  // Fetch matchups
+  const matchupsRes = await fetch(`${baseUrl}/league/${leagueId}/matchups/${weekNumber}`)
+  const matchups = await matchupsRes.json()
+  console.log(`Matchups response (${matchupsRes.status}):`, matchups)
+  
+  // Fetch rosters
+  const rostersRes = await fetch(`${baseUrl}/league/${leagueId}/rosters`)
+  const rosters = await rostersRes.json()
+  console.log(`Rosters response (${rostersRes.status}):`, rosters)
+  
+  // Fetch users
+  const usersRes = await fetch(`${baseUrl}/league/${leagueId}/users`)
+  const users = await usersRes.json()
+  console.log(`Users response (${usersRes.status}):`, users)
+  
+  // Fetch transactions
+  const transactionsRes = await fetch(`${baseUrl}/league/${leagueId}/transactions/${weekNumber}`)
+  const transactions = await transactionsRes.json()
+  console.log(`Transactions response (${transactionsRes.status}):`, transactions)
+  
+  return { matchups, rosters, users, transactions }
+}
 
+async function createUserMappings(supabase: any, sleeperData: any, leagueId: string): Promise<UserMapping[]> {
+  const { users, rosters } = sleeperData
+  const mappings: UserMapping[] = []
+  
+  // Check if data is available (might be null for future weeks)
+  if (!rosters || !users) {
+    console.log('Rosters or users data not available - this is normal for future weeks')
+    return mappings
+  }
+  
+  // Create mapping between rosters and users
+  rosters.forEach((roster: any) => {
+    const user = users.find((u: any) => u.user_id === roster.owner_id)
+    if (user) {
+      mappings.push({
+        roster_id: roster.roster_id,
+        sleeper_user_id: user.user_id,
+        display_name: user.display_name || user.username || `Team ${roster.roster_id}`
+      })
+    }
+  })
+  
+  // Store/update user mappings in database
+  for (const mapping of mappings) {
+    try {
+      await supabase.from('users').upsert({
+        league_id: leagueId,
+        sleeper_user_id: mapping.sleeper_user_id,
+        roster_id: mapping.roster_id,
+        display_name: mapping.display_name
+      }, { onConflict: 'league_id,sleeper_user_id' })
+    } catch (error) {
+      console.error('Error storing user mapping:', error)
+    }
+  }
+  
+  return mappings
+}
+
+async function getTransactionStats(supabase: any, leagueId: string, freeTransactionsPerSeason: number): Promise<TransactionStats[]> {
+  try {
+    // CRITICAL: August 24, 2025 cutoff rule - only count post-draft transactions
+    const draftCutoff = new Date('2025-08-24T00:00:00Z').getTime();
+    
+    // Get all rosters for this league
+    const { data: users } = await supabase
+      .from('users')
+      .select('roster_id')
+      .eq('league_id', leagueId)
+    
+    if (!users) return []
+    
+    // Get transaction counts for each roster this season (post-draft only)
+    const { data: transactionCounts } = await supabase
+      .from('transactions')
+      .select('roster_id, count(*)')
+      .eq('league_id', leagueId)
+      .gte('created_timestamp', draftCutoff) // Only count transactions after August 24
+      .group('roster_id')
+    
+    // Get mulligan status (inactive penalties with 0 fee indicate mulligan used)
+    const { data: mulliganUsage } = await supabase
+      .from('inactive_penalties')
+      .select('roster_id, count(*)')
+      .eq('league_id', leagueId)
+      .eq('fee_amount', 0)
+      .group('roster_id')
+    
+    const stats: TransactionStats[] = []
+    
+    users.forEach((user: any) => {
+      const transactionCount = transactionCounts?.find((tc: any) => tc.roster_id === user.roster_id)?.count || 0
+      const mulliganCount = mulliganUsage?.find((mu: any) => mu.roster_id === user.roster_id)?.count || 0
+      
+      stats.push({
+        roster_id: user.roster_id,
+        transactions_used: transactionCount,
+        free_transactions_remaining: Math.max(0, freeTransactionsPerSeason - transactionCount),
+        mulligan_used: mulliganCount > 0
+      })
+    })
+    
+    return stats
+  } catch (error) {
+    console.error('Error getting transaction stats:', error)
+    return []
+  }
+}
+
+async function processMatchupsAndFees(
+  supabase: any, 
+  league: any, 
+  sleeperData: any, 
+  weekNumber: number, 
+  userMappings: UserMapping[],
+  transactionStats: TransactionStats[]
+) {
+  const fees: FeeData[] = []
+  const { matchups, rosters, users, transactions } = sleeperData
+  
+  // Check if matchup data is available (might be null for future weeks)
+  if (!matchups || !Array.isArray(matchups)) {
+    console.log('Matchup data not available - this is normal for future weeks')
+    return { fees: [], highScorer: null }
+  }
+  
+  // Create user mapping lookup for quick access
+  const userMap = new Map()
+  userMappings.forEach(mapping => {
+    userMap.set(mapping.roster_id, mapping.display_name)
+  })
+  
+  // Create transaction stats lookup
+  const statsMap = new Map()
+  transactionStats.forEach(stat => {
+    statsMap.set(stat.roster_id, stat)
   })
   
   // Process each matchup
@@ -277,17 +535,6 @@ async function updateFeeSummary(supabase: any, leagueId: string, rosterId: numbe
 async function sendDiscordNotification(webhookUrl: string, data: any, weekNumber: number) {
   const { fees, highScorer } = data
   
-  // Group fees by roster
-  const feesByRoster: Record<string, FeeSummary> = fees.reduce((acc: Record<string, FeeSummary>, fee: FeeData) => {
-    const rosterId = fee.roster_id.toString()
-    if (!acc[rosterId]) {
-      acc[rosterId] = { total: 0, items: [] }
-    }
-    acc[rosterId].total += fee.amount
-    acc[rosterId].items.push(fee)
-    return acc
-  }, {})
-  
   // Create Discord embed
   const embed: DiscordEmbed = {
     title: `📊 Week ${weekNumber} Fee Summary`,
@@ -300,31 +547,32 @@ async function sendDiscordNotification(webhookUrl: string, data: any, weekNumber
     timestamp: new Date().toISOString()
   }
   
-  // Add high scorer
-  if (highScorer) {
-    // Find owner name for high scorer
-    const highScorerFee = fees.find((f: FeeData) => f.roster_id === highScorer.roster_id)
-    const highScorerName = highScorerFee?.owner_name || `Team ${highScorer.roster_id}`
-    
+  // Add high scorer (matching exact format from your example)
+  if (highScorer && highScorer.display_name && highScorer.points) {
     embed.fields.push({
       name: '🏆 Highest Scorer',
-      value: `${highScorerName}: ${highScorer.points} pts\n+$${data.highScoreBonus || 5} bonus`,
+      value: `${highScorer.display_name}: ${highScorer.points} pts\n+$5 bonus`,
       inline: false
     })
   }
   
-  // Add fees summary with owner names
-  let totalWeekFees = 0
-  for (const [rosterId, feeData] of Object.entries(feesByRoster) as [string, FeeSummary][]) {
-    totalWeekFees += feeData.total
-    // Get owner name from first fee item
-    const ownerName = feeData.items[0]?.owner_name || `Team ${rosterId}`
-    
-    embed.fields.push({
-      name: `${ownerName}`,
-      value: `Fees: $${feeData.total.toFixed(2)}`,
-      inline: true
-    })
+  // Add fee summaries (matching exact format - just owner name and fee amount)
+  let totalWeekFees = 0;
+  if (fees && Array.isArray(fees)) {
+    for (const feeString of fees) {
+      // Parse fee string format: "DisplayName: $amount (description)"
+      const match = feeString.match(/^([^:]+):\s*\$(\d+(?:\.\d{2})?)\s*\((.+)\)$/);
+      if (match) {
+        const [, ownerName, amount] = match;
+        totalWeekFees += parseFloat(amount);
+        
+        embed.fields.push({
+          name: `💸 ${ownerName}`,
+          value: `Fees: $${parseFloat(amount).toFixed(2)}`,
+          inline: true
+        })
+      }
+    }
   }
   
   embed.fields.push({
@@ -342,6 +590,5 @@ async function sendDiscordNotification(webhookUrl: string, data: any, weekNumber
       embeds: [embed]
     })
   })
->>>>>>> 24a9cfe (Fix: enforce all 2025 business rules, correct inactive/mulligan/transaction logic, document rules, validate with live data)
 }
 
