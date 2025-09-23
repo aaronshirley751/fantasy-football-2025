@@ -1,0 +1,37 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors/IDE
+.vscode/
+.history/
+*.swp
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Node/Deno
+node_modules/
+
+# Env files
+.env
+.env.*
+
+# Supabase temp/cache
+fantasy-fee-tracker/supabase/.temp/
+supabase/.temp/
+
+# Salesforce CLI artifacts
+.sfdx/
+
+# Coverage
+coverage/
+
+# Misc
+*.tmp
+*.temp
