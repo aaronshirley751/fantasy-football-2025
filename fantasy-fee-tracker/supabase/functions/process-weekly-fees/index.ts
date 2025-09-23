@@ -68,8 +68,8 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createClient(supabaseUrl, supabaseKey)
 
-    // Get request data
-    const { week_number, league_id } = await req.json()
+  // Get request data
+  const { week_number, league_id, disable_discord } = await req.json()
     
     // Get league configuration
     const { data: league } = await supabase
@@ -111,12 +111,17 @@ Deno.serve(async (req) => {
     // Process matchups and calculate fees
     const { fees, highScorer, userMap } = await processMatchupsAndFees(supabase, league, sleeperData, week_number, userMappings, transactionStats)
     
-    // Send Discord notification with fixed high scorer name
-    await sendDiscordNotification(league.discord_webhook_url, { fees, highScorer }, week_number, userMap!)
-    console.log('✅ Discord notification sent successfully with corrected high scorer name')
+    // Optionally skip Discord when dry-running
+    if (disable_discord) {
+      console.log('🧪 Dry run: Discord notification disabled for this request')
+    } else {
+      // Send Discord notification with fixed high scorer name
+      await sendDiscordNotification(league.discord_webhook_url, { fees, highScorer }, week_number, userMap!)
+      console.log('✅ Discord notification sent successfully with corrected high scorer name')
+    }
 
     return new Response(
-      JSON.stringify({ success: true, fees: { fees, highScorer } }),
+  JSON.stringify({ success: true, fees: { fees, highScorer }, discord_skipped: !!disable_discord }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   } catch (error) {
