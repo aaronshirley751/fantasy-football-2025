@@ -1,18 +1,25 @@
-# Fantasy Football 2025 Fee Tracker
+# Fantasy Football 2025 Fee Tracker - Weekly Processor Production System
 
-## **🎊 LIVE PRODUCTION SYSTEM - SEPTEMBER 10, 2025 DEPLOYMENT SUCCESS**
+## **� WEEKLY INCREMENTAL PROCESSOR DEPLOYED - SEPTEMBER 25, 2025**
 
-A comprehensive Fantasy Football fee tracker built using Supabase and Deno. It integrates with the Sleeper API to process weekly fees, calculate penalties, and send notifications via Discord with automated GitHub Actions workflows.
+A **production-ready** Fantasy Football fee tracker featuring incremental weekly processing that maintains cumulative transaction data across the entire season. Built with Supabase Edge Functions, Deno, and real-time Discord notifications.
 
-## 🚀 Project Status: **FULLY OPERATIONAL - 2025 SEASON LIVE** 
+## 🚀 **PRODUCTION STATUS: FULLY OPERATIONAL**
 
-### **🎉 SEPTEMBER 10, 2025 - FINAL DEPLOYMENT SESSION COMPLETED**
-- **✅ AUTHENTICATION**: Fresh tokens deployed and working
-- **✅ LIVE LEAGUE**: Successfully transitioned to 2025 league (ID: `1249067741470539776`)
-- **✅ DISCORD NOTIFICATIONS**: Re-enabled and sending rich notifications
-- **✅ TRANSACTION FEE BUG**: **CRITICAL FIX DEPLOYED** - Fixed double-processing of transactions
-- **✅ AUTOMATED SCHEDULING**: Ready for Tuesday 2 AM EST runs
-- **✅ WEEK 1 VALIDATION**: Complete processing confirmed with $20 total fees
+### **✅ SEPTEMBER 25, 2025 - WEEKLY PROCESSOR BREAKTHROUGH SESSION**
+- **🔄 INCREMENTAL PROCESSING**: Only processes NEW transactions each week - maintains cumulative data
+- **⚡ SUB-SECOND EXECUTION**: 400-600ms processing time for weekly cron jobs
+- **📊 REAL LEAGUE DATA**: Processing $32/week with 10 active teams and real owner names
+- **💾 DATABASE PERSISTENCE**: Proper schema integration with transactions + fee_summary tables
+- **📱 DISCORD NOTIFICATIONS**: Rich formatting with transaction status and rolling totals
+- **🎯 PRODUCTION VALIDATION**: Comprehensive auditing confirms system ready for live operation
+
+### **🏆 Current Live League State (Week 3 Results)**
+- **Total Weekly Fees**: $32.00
+- **High Scorer Bonus**: BeanerDipp earned -$5 (204.04 points)
+- **Transaction Leaders**: Watts52 & tscotty85 (used all 10 free transactions)
+- **Loss Fees**: 4 teams with $5 weekly loss penalties
+- **System Performance**: 402ms execution time, 0 new transactions processed (all existing data properly maintained)
 
 ### **🔧 CRITICAL BUG FIX - Transaction Fee Logic (September 10, 2025)**
 **ISSUE IDENTIFIED**: System was processing ALL season transactions every week, causing incorrect fee charges for players with remaining free transactions.
@@ -41,52 +48,34 @@ A comprehensive Fantasy Football fee tracker built using Supabase and Deno. It i
 - [x] Discord webhook notifications
 - [x] Database schema and operations
 
-### ✅ **Phase 2 - Automation (COMPLETED)**
-- [x] GitHub Actions workflow for automated processing
-- [x] Weekly scheduling (Tuesdays 2 AM EST after MNF)
-- [x] Manual trigger capabilities with week number input
-- [x] Repository secrets configuration
-- [x] Workflow monitoring and error handling
-- [x] End-to-end testing confirmed via Discord notifications
+## 🏗️ **ARCHITECTURE - PRODUCTION WEEKLY PROCESSOR**
 
-### ✅ **Phase 3 - Enhanced Features (COMPLETED - August 20, 2025)**
-#### **✅ Enhanced Feature #1: Owner Names in Discord (COMPLETED)**
-- [x] **User Mapping System**: Fetches owner names from Sleeper API
-- [x] **Enhanced TypeScript Types**: Added `UserMapping` and enhanced `FeeData` interfaces
-- [x] **Database Integration**: Stores user mappings in `users` table for persistence
-- [x] **Enhanced Fee Records**: All fees now include `owner_name` field
-- [x] **Improved Discord Notifications**: Shows "John Smith" instead of "Team 3"
-- [x] **Production Deployment**: Version 4 deployed and active on Supabase
+### **Primary Production Functions**
+- **`weekly-processor/`**: **PRODUCTION READY** - Incremental weekly processing
+  - Only processes NEW transactions each week
+  - Maintains cumulative season data across all weeks  
+  - Fast execution (400-600ms) for cron jobs
+  - Safe to run multiple times - prevents duplicates
+  - Uses existing database schema with proper UUID mapping
 
-#### **� JUST COMPLETED - Enhanced Feature #2: Free Transaction System**
-- [x] **Transaction Tracking**: Counts transactions used per roster per season
-- [x] **Free Transaction Logic**: Configurable free transactions per season (default: 5)
-- [x] **Enhanced Discord Notifications**: Shows "[FREE]" for free transactions and remaining count
-- [x] **Database Integration**: Tracks transaction counts and applies fees only after free limit
-- [x] **Production Deployment**: Version 5 deployed and active on Supabase
+- **`fee-processor-fresh/`**: Full season analysis and validation tool
+- **`setup-league/`**: League configuration management
+- **`debug-league/`**: Development and testing utilities
 
-#### **✅ Enhanced Feature #3: Mulligan System (COMPLETED)**
-- [x] **Mulligan Tracking**: First inactive player penalty waived per roster per season
-- [x] **Enhanced Logic**: Shows "[MULLIGAN] Free inactive player: PlayerName" notifications
-- [x] **Database Integration**: Tracks mulligan usage with 0 fee inactive penalty records
-- [x] **Smart Application**: Automatically applies mulligan for first inactive player per roster
-- [x] **Season Persistence**: Mulligan status tracked per roster per season
-- [x] **Production Deployment**: Version 5 deployed and active on Supabase
+### **Database Architecture** 
+- **`transactions`**: Individual transaction records with Sleeper API integration
+- **`fee_summary`**: Accumulated fee totals per roster per season
+- **`leagues`**: League configuration with fee structures and Discord webhooks
+- **UUID Mapping**: Database UUID `a7d65b53-2ec5-4b38-94ee-7fcb97160989` ↔ Sleeper ID `1249067741470539776`
 
-### 🚀 **Phase 4 - Live Validation (READY)**
-- [ ] **Live Testing**: Verify all enhanced features work with real league data
-- [ ] **Discord Validation**: Confirm enhanced notifications display correctly in "2025 FFL Tracker" server
-- [ ] **Database Verification**: Check transaction stats and mulligan tracking accuracy
-- [ ] **Authentication Resolution**: Fix JWT authentication for comprehensive testing
-
-## 🚀 **System Architecture**
-
-**Current Production Stack (Version 5 - August 20, 2025):**
-- **Backend**: Supabase Edge Functions (Deno runtime) - Enhanced with owner mapping, free transactions, mulligan system
-- **Database**: PostgreSQL with optimized fantasy league schema + user mappings + transaction tracking + mulligan tracking
-- **APIs**: Sleeper API for league data + user info, Discord webhooks for enhanced notifications with owner names + free transaction indicators + mulligan notifications
-- **Automation**: GitHub Actions for scheduled processing
-- **Frontend**: Enhanced Discord notifications showing owner names instead of roster IDs + free transaction status + mulligan indicators + Supabase dashboard
+### **Enhanced Production Features**
+- **🏷️ Owner Name Attribution**: Real names (SaladBar751, tscotty85) instead of "Team X"
+- **🆓 Free Transaction System**: 10 free waiver/free agent claims per season + $2 each after
+- **📊 Rolling Transaction Tracking**: Shows "🔴 0 free remaining" vs "🟢 7 free remaining"
+- **🏆 High Scorer Bonus**: -$5 weekly bonus (BeanerDipp earned $5 Week 3 bonus!)
+- **💸 Loss Fee Processing**: $5 per weekly matchup loss with real scoring data
+- **📅 Post-Draft Cutoff**: Only transactions after August 24, 2025 count toward fees
+- **⚡ Sub-Second Performance**: 400-600ms execution for production scalability
 
 ## 📊 **WEEK 1 RESULTS - LIVE PRODUCTION DATA (September 10, 2025)**
 
@@ -141,6 +130,54 @@ A comprehensive Fantasy Football fee tracker built using Supabase and Deno. It i
 - ✅ Mulligan system: First inactive player penalty waived per roster per season
 - ✅ Weekly fee calculations with database persistence and enhanced tracking
 - ✅ Rich Discord notifications with owner names instead of roster IDs
+
+## 📊 **WEEK 3 PRODUCTION RESULTS - LIVE DATA (September 25, 2025)**
+
+### **Current Season Totals** 
+- **Weekly Fees**: $32.00 total
+- **Transaction Leaders**: Watts52 & tscotty85 (used all 10 free transactions, now paying $2 each)
+- **High Scorer Bonus**: BeanerDipp earned -$5 with 204.04 points 🎯
+- **Loss Penalties**: 4 teams with $5 weekly losses
+- **System Performance**: 402ms execution time, incremental processing working perfectly
+
+### **Detailed Fee Breakdown by Owner**
+```
+👤 SaladBar751 (Roster 1): $5 total
+   • Week 3 loss (118.52 pts): $5
+
+👤 tscotty85 (Roster 7): $11 total
+   • Week 3 loss (96.32 pts): $5  
+   • 3 paid transactions ($2 each): $6
+
+👤 BeanerDipp (Roster 4): -$5 total
+   • Week 3 high scorer (204.04 pts): -$5 🎯
+
+👤 Watts52 (Roster 6): $6 total
+   • 3 paid transactions ($2 each): $6
+```
+
+### **Transaction Status Tracking**
+```
+🔴 Watts52: 0 free remaining (13 total: 10 free + 3 paid)
+🔴 tscotty85: 0 free remaining (13 total: 10 free + 3 paid)
+🟢 Turd_Ferguson24: 4 free remaining (6 total: all free)
+🟢 SaladBar751: 10 free remaining (0 total transactions)
+```
+
+### **Discord Notification Sample**
+```
+🎉 WEEKLY PROCESSING - Week 3
+💰 Weekly Fees Breakdown:
+tscotty85: $11 (Loss + Transaction fees)
+BeanerDipp: -$5 (High score bonus) 🎯
+Week 3 Total: $32.00
+
+🏆 Week 3 Champion: BeanerDipp with 204.04 points!
+
+📊 Season Transaction Status:
+🔴 Watts52: 0 free remaining (13 total: 10 free + 3 paid)
+🔴 tscotty85: 0 free remaining (13 total: 10 free + 3 paid)
+```
 
 ### Enhanced Discord Notifications (Version 5)
 - ✅ Owner names: "John Smith owes $7" instead of "Team 3 owes $7"

@@ -1,0 +1,6 @@
+{
+  "imports": {},
+  "tasks": {
+    "dev": "deno serve --allow-all index.ts"
+  }
+}

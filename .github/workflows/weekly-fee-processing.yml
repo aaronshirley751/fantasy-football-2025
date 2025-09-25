@@ -14,9 +14,9 @@ on:
         default: '1'
         type: string
       league_id:
-        description: 'League ID (leave default for 2025 live league)'
+        description: 'Database league UUID (defaults to 2025 live league record)'
         required: false
-        default: '1249067741470539776'
+        default: 'a7d65b53-2ec5-4b38-94ee-7fcb97160989'
         type: string
 
 jobs:
@@ -68,12 +68,12 @@ jobs:
         echo "Database Debug Response:"
         echo "$debug_response"
         
-        # Setup league if needed
-        echo "🛠️ Setting up league configuration..."
+        # Ensure the database is configured for the 2025 live league
+        echo "🛠️ Ensuring 2025 league configuration..."
         setup_response=$(curl -s -X POST "https://jfeuobfjgqownybluvje.supabase.co/functions/v1/setup-league" \
           -H "Content-Type: application/json" \
           -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
-          -d '{"action": "setup_league"}')
+          -d '{"action":"setup_2025_league","league_id_2025":"1249067741470539776"}')
         
         echo "Setup Response:"
         echo "$setup_response"
@@ -88,10 +88,10 @@ jobs:
           FUNCTION_URL="$FALLBACK_FUNCTION_URL"
         fi
 
-        # Use provided input league_id when manually dispatched; otherwise default to 2025 live league
+        # Use provided input league_id when manually dispatched; otherwise default to DB UUID for 2025 live league
         LEAGUE_ID="${{ github.event.inputs.league_id }}"
         if [ -z "$LEAGUE_ID" ]; then
-          LEAGUE_ID='1249067741470539776'
+          LEAGUE_ID='a7d65b53-2ec5-4b38-94ee-7fcb97160989'
         fi
 
         response=$(curl -s -X POST "$FUNCTION_URL" \
@@ -117,7 +117,7 @@ jobs:
         # Recompute league id for this step
         LEAGUE_ID="${{ github.event.inputs.league_id }}"
         if [ -z "$LEAGUE_ID" ]; then
-          LEAGUE_ID='1249067741470539776'
+          LEAGUE_ID='a7d65b53-2ec5-4b38-94ee-7fcb97160989'
         fi
 
         echo "## ✅ Week ${{ steps.get-week.outputs.week }} Fee Processing Complete" >> $GITHUB_STEP_SUMMARY
@@ -135,7 +135,7 @@ jobs:
         # Recompute league id for this step
         LEAGUE_ID="${{ github.event.inputs.league_id }}"
         if [ -z "$LEAGUE_ID" ]; then
-          LEAGUE_ID='1249067741470539776'
+          LEAGUE_ID='a7d65b53-2ec5-4b38-94ee-7fcb97160989'
         fi
 
         echo "## ❌ Week ${{ steps.get-week.outputs.week }} Fee Processing Failed" >> $GITHUB_STEP_SUMMARY
