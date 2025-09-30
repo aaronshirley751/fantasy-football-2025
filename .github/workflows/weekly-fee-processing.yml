@@ -1,9 +1,9 @@
 name: Weekly Fantasy Football Fee Processing
 
 on:
-  # Run every Tuesday at 2 AM EST (after Monday Night Football)
-  schedule:
-    - cron: '0 7 * * 2'  # 7 AM UTC = 2 AM EST during standard time
+  # TEMPORARILY DISABLED - Run every Tuesday at 2 AM EST (after Monday Night Football)
+  # schedule:
+  #   - cron: '0 7 * * 2'  # 7 AM UTC = 2 AM EST during standard time
   
   # Allow manual triggering with week number input
   workflow_dispatch:
@@ -14,18 +14,15 @@ on:
         default: '1'
         type: string
       league_id:
-        description: 'Database league UUID (defaults to 2025 live league record)'
+        description: 'League ID (leave default)'
         required: false
-        default: 'a7d65b53-2ec5-4b38-94ee-7fcb97160989'
+        default: '1249067741470539776'
         type: string
 
 jobs:
   process-weekly-fees:
     runs-on: ubuntu-latest
     name: Process Fantasy Football Fees
-    env:
-      # Fallbacks so the workflow still runs even if a secret is missing
-      FALLBACK_FUNCTION_URL: https://jfeuobfjgqownybluvje.supabase.co/functions/v1/process-weekly-fees
     
     steps:
     - name: Checkout repository
@@ -38,7 +35,7 @@ jobs:
         if [ "${{ github.event.inputs.week_number }}" != "" ]; then
           echo "week=${{ github.event.inputs.week_number }}" >> $GITHUB_OUTPUT
         else
-          # Simple calculation: Kickoff week starts September 4, 2025 (Thu)
+          # Simple calculation: week 1 starts September 5th, 2025
           start_date="2025-09-04"
           current_date=$(date +%Y-%m-%d)
           days_diff=$(( ($(date -d "$current_date" +%s) - $(date -d "$start_date" +%s)) / 86400 ))
@@ -68,12 +65,12 @@ jobs:
         echo "Database Debug Response:"
         echo "$debug_response"
         
-        # Ensure the database is configured for the 2025 live league
-        echo "🛠️ Ensuring 2025 league configuration..."
+        # Setup league if needed
+        echo "🛠️ Setting up league configuration..."
         setup_response=$(curl -s -X POST "https://jfeuobfjgqownybluvje.supabase.co/functions/v1/setup-league" \
           -H "Content-Type: application/json" \
           -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
-          -d '{"action":"setup_2025_league","league_id_2025":"1249067741470539776"}')
+          -d '{"action": "setup_league"}')
         
         echo "Setup Response:"
         echo "$setup_response"
@@ -82,22 +79,13 @@ jobs:
       run: |
         echo "Processing fees for Week ${{ steps.get-week.outputs.week }}"
         
-        # Prefer secret URL; fall back to known project URL if unset
-        FUNCTION_URL="${{ secrets.SUPABASE_FUNCTION_URL }}"
-        if [ -z "$FUNCTION_URL" ]; then
-          FUNCTION_URL="$FALLBACK_FUNCTION_URL"
-        fi
-
-        # Use provided input league_id when manually dispatched; otherwise default to DB UUID for 2025 live league
-        LEAGUE_ID="${{ github.event.inputs.league_id }}"
-        if [ -z "$LEAGUE_ID" ]; then
-          LEAGUE_ID='a7d65b53-2ec5-4b38-94ee-7fcb97160989'
-        fi
-
-        response=$(curl -s -X POST "$FUNCTION_URL" \
+        response=$(curl -s -X POST "${{ secrets.SUPABASE_FUNCTION_URL }}" \
           -H "Content-Type: application/json" \
           -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
-          -d "{\n            \"week_number\": ${{ steps.get-week.outputs.week }},\n            \"league_id\": \"$LEAGUE_ID\"\n          }")
+          -d '{
+            "week_number": ${{ steps.get-week.outputs.week }},
+            "league_id": "1249067741470539776"
+          }')
         
         echo "Function Response:"
         echo "$response"
@@ -114,15 +102,9 @@ jobs:
     - name: Create Processing Summary
       if: success()
       run: |
-        # Recompute league id for this step
-        LEAGUE_ID="${{ github.event.inputs.league_id }}"
-        if [ -z "$LEAGUE_ID" ]; then
-          LEAGUE_ID='a7d65b53-2ec5-4b38-94ee-7fcb97160989'
-        fi
-
-        echo "## ✅ Week ${{ steps.get-week.outputs.week }} Fee Processing Complete" >> $GITHUB_STEP_SUMMARY
+        echo "## ��� Week ${{ steps.get-week.outputs.week }} Fee Processing Complete" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "- **League ID**: $LEAGUE_ID" >> $GITHUB_STEP_SUMMARY
+        echo "- **League ID**: ${{ github.event.inputs.league_id || 'd06f0672-2848-4b5d-86f5-9ab559605b4f' }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Week Number**: ${{ steps.get-week.outputs.week }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Processed At**: $(date)" >> $GITHUB_STEP_SUMMARY
         echo "- **Status**: ✅ Success" >> $GITHUB_STEP_SUMMARY
@@ -132,15 +114,9 @@ jobs:
     - name: Notify on Failure
       if: failure()
       run: |
-        # Recompute league id for this step
-        LEAGUE_ID="${{ github.event.inputs.league_id }}"
-        if [ -z "$LEAGUE_ID" ]; then
-          LEAGUE_ID='a7d65b53-2ec5-4b38-94ee-7fcb97160989'
-        fi
-
         echo "## ❌ Week ${{ steps.get-week.outputs.week }} Fee Processing Failed" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "- **League ID**: $LEAGUE_ID" >> $GITHUB_STEP_SUMMARY
+        echo "- **League ID**: ${{ github.event.inputs.league_id || 'd06f0672-2848-4b5d-86f5-9ab559605b4f' }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Week Number**: ${{ steps.get-week.outputs.week }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Failed At**: $(date)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
