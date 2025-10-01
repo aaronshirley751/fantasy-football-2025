@@ -67,8 +67,8 @@ Deno.serve(async (req) => {
       // Clear inactive penalties
       await supabase.from('inactive_penalties').delete().eq('league_id', 'd06f0672-2848-4b5d-86f5-9ab559605b4f')
       
-      // Clear fee summary
-      await supabase.from('fee_summary').delete().eq('league_id', 'd06f0672-2848-4b5d-86f5-9ab559605b4f')
+  // Clear fee summaries
+  await supabase.from('fee_summaries').delete().eq('league_id', 'd06f0672-2848-4b5d-86f5-9ab559605b4f')
       
       // Clear users (will be repopulated from 2025 league)
       await supabase.from('users').delete().eq('league_id', 'd06f0672-2848-4b5d-86f5-9ab559605b4f')
@@ -106,7 +106,7 @@ Deno.serve(async (req) => {
           success: true, 
           message: `League updated successfully for 2025 season with league ID: ${league_id_2025}`,
           league: league,
-          cleared_tables: ['transactions', 'matchups', 'inactive_penalties', 'fee_summary', 'users']
+          cleared_tables: ['transactions', 'matchups', 'inactive_penalties', 'fee_summaries', 'users']
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )

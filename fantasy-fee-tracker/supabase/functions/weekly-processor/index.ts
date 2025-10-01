@@ -7,6 +7,27 @@ const corsHeaders = {
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+interface FeeData {
+  roster_id: number;
+  type: string;
+  amount: number;
+  description: string;
+  owner_name?: string;
+}
+
+interface RosterFeeAccumulator {
+  roster_id: number;
+  owner_name?: string;
+  loss_fees: number;
+  transaction_fees: number;
+  inactive_fees: number;
+  high_score_credits: number;
+  other_fees: number;
+  total_transactions: number;
+  paid_transactions: number;
+  mulligan_used: boolean;
+}
+
 Deno.serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
@@ -171,40 +192,11 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Update fee summaries for any new fees
-    for (const fee of fees) {
-      if (fee.amount > 0) {
-        const { data: existing } = await supabase
-          .from('fee_summary')
-          .select('*')
-          .eq('league_id', databaseLeagueId)
-          .eq('roster_id', fee.roster_id)
-          .single();
-        
-        if (existing) {
-          await supabase.from('fee_summary')
-            .update({
-              total_owed: existing.total_owed + fee.amount,
-              balance: existing.balance + fee.amount,
-              last_updated: new Date().toISOString()
-            })
-            .eq('id', existing.id);
-        } else {
-          await supabase.from('fee_summary').insert({
-            league_id: databaseLeagueId,
-            roster_id: fee.roster_id,
-            total_owed: fee.amount,
-            balance: fee.amount,
-            last_updated: new Date().toISOString()
-          });
-        }
-      }
-    }
-
     const totalFees = fees.reduce((sum, fee) => sum + fee.amount, 0);
     const executionTime = Date.now() - startTime;
     
     console.log(`💰 Processed ${newTransactionsProcessed} new transactions, ${fees.length} fees totaling $${totalFees}`);
+  await recalculateFeeSummaries(supabase, leagueConfig, userMappings, actualWeek);
 
     // ========== DISCORD NOTIFICATION ==========
     let discordMessage = `🎉 WEEKLY PROCESSING - Week ${actualWeek}\n`;
@@ -262,3 +254,179 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+async function recalculateFeeSummaries(
+  supabase: any,
+  league: any,
+  userMappings: any[],
+  weekNumber: number | null
+) {
+  const ownerMap = new Map<number, string>();
+  userMappings.forEach((mapping: any) => {
+    ownerMap.set(mapping.roster_id, mapping.display_name);
+  });
+
+  const summaryMap = new Map<number, RosterFeeAccumulator>();
+  const ensureAccumulator = (rosterId: number): RosterFeeAccumulator => {
+    const numericRoster = Number(rosterId);
+    if (!summaryMap.has(numericRoster)) {
+      summaryMap.set(numericRoster, {
+        roster_id: numericRoster,
+        owner_name: ownerMap.get(numericRoster),
+        loss_fees: 0,
+        transaction_fees: 0,
+        inactive_fees: 0,
+        high_score_credits: 0,
+        other_fees: 0,
+        total_transactions: 0,
+        paid_transactions: 0,
+        mulligan_used: false
+      });
+    }
+    return summaryMap.get(numericRoster)!;
+  };
+
+  const { data: existingSummaries } = await supabase
+    .from('fee_summaries')
+    .select('*')
+    .eq('league_id', league.id);
+
+  const existingMap = new Map<number, any>();
+  existingSummaries?.forEach((row: any) => {
+    const rosterId = Number(row.roster_id);
+    const acc = ensureAccumulator(rosterId);
+    if (!acc.owner_name && row.owner_name) {
+      acc.owner_name = row.owner_name;
+    }
+    existingMap.set(rosterId, row);
+  });
+
+  const lossFeeValue = Number(league.loss_fee || 0);
+  const highScoreBonusValue = Number(league.high_score_bonus || 0);
+  const freeAllowance = Number(league.free_transactions_per_season || 10);
+
+  const { data: matchupRows } = await supabase
+    .from('matchups')
+    .select('roster_id, loss_fee_applied, is_high_scorer')
+    .eq('league_id', league.id);
+
+  matchupRows?.forEach((row: any) => {
+    const rosterId = Number(row.roster_id);
+    const acc = ensureAccumulator(rosterId);
+    if (!acc.owner_name) {
+      acc.owner_name = ownerMap.get(rosterId);
+    }
+    if (row.loss_fee_applied) {
+      acc.loss_fees += lossFeeValue;
+    }
+    if (row.is_high_scorer) {
+      acc.high_score_credits += highScoreBonusValue;
+    }
+  });
+
+  const { data: transactionRows } = await supabase
+    .from('transactions')
+    .select('roster_id, fee_amount, type')
+    .eq('league_id', league.id);
+
+  transactionRows?.forEach((row: any) => {
+    const rosterId = Number(row.roster_id);
+    const feeAmount = Number(row.fee_amount || 0);
+    const transactionType = row.type || '';
+    const acc = ensureAccumulator(rosterId);
+    if (!acc.owner_name) {
+      acc.owner_name = ownerMap.get(rosterId);
+    }
+
+    const isCountableTransaction = ['waiver', 'free_agent'].includes(transactionType);
+    if (isCountableTransaction) {
+      acc.total_transactions += 1;
+    }
+
+    if (feeAmount > 0) {
+      if (isCountableTransaction) {
+        acc.transaction_fees += feeAmount;
+        acc.paid_transactions += 1;
+      } else {
+        acc.other_fees += feeAmount;
+      }
+    }
+  });
+
+  const { data: penaltyRows } = await supabase
+    .from('inactive_penalties')
+    .select('roster_id, fee_amount')
+    .eq('league_id', league.id);
+
+  penaltyRows?.forEach((row: any) => {
+    const rosterId = Number(row.roster_id);
+    const feeAmount = Number(row.fee_amount || 0);
+    const acc = ensureAccumulator(rosterId);
+    if (!acc.owner_name) {
+      acc.owner_name = ownerMap.get(rosterId);
+    }
+
+    if (feeAmount > 0) {
+      acc.inactive_fees += feeAmount;
+    } else {
+      acc.mulligan_used = true;
+    }
+  });
+
+  userMappings.forEach(({ roster_id, display_name }: any) => {
+    const acc = ensureAccumulator(roster_id);
+    if (!acc.owner_name) {
+      acc.owner_name = display_name;
+    }
+  });
+
+  const toCurrency = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+  const nowIso = new Date().toISOString();
+
+  const summaries = Array.from(summaryMap.values()).map((acc) => {
+    const existing = existingMap.get(acc.roster_id);
+    const ownerName = acc.owner_name || existing?.owner_name || `Team ${acc.roster_id}`;
+    const totalPaid = existing?.total_paid ? Number(existing.total_paid) : 0;
+    const lossFees = toCurrency(acc.loss_fees);
+    const transactionFees = toCurrency(acc.transaction_fees);
+    const inactiveFees = toCurrency(acc.inactive_fees);
+    const otherFees = toCurrency(acc.other_fees);
+    const highScoreCredits = toCurrency(acc.high_score_credits);
+    const totalOwed = toCurrency(lossFees + transactionFees + inactiveFees + otherFees - highScoreCredits);
+    const balance = toCurrency(totalOwed - totalPaid);
+    const freeRemaining = Math.max(0, freeAllowance - acc.total_transactions);
+
+    return {
+      league_id: league.id,
+      roster_id: acc.roster_id,
+      owner_name: ownerName,
+      loss_fees: lossFees,
+      transaction_fees: transactionFees,
+      inactive_fees: inactiveFees,
+      high_score_credits: highScoreCredits,
+      other_fees: otherFees,
+      total_owed: totalOwed,
+      total_paid: toCurrency(totalPaid),
+      balance,
+      free_transactions_remaining: freeRemaining,
+      total_transactions: acc.total_transactions,
+      paid_transactions: acc.paid_transactions,
+      mulligan_used: acc.mulligan_used,
+      updated_week: weekNumber ?? existing?.updated_week ?? null,
+      last_updated: nowIso
+    };
+  });
+
+  if (summaries.length === 0) {
+    return;
+  }
+
+  const { error } = await supabase
+    .from('fee_summaries')
+    .upsert(summaries, { onConflict: 'league_id,roster_id' });
+
+  if (error) {
+    console.error('Error updating fee summaries:', error);
+    throw new Error('Failed to update fee summaries');
+  }
+}

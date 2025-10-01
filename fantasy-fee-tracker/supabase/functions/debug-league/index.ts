@@ -113,14 +113,78 @@ Deno.serve(async (req) => {
       }
     }
 
+    let feeSummaries: any[] = []
+    let feeSummariesError: any = null
+    let transactionStats: any[] = []
+    let recentFees: any[] = []
+
+    if (league_id) {
+      const { data: summaries, error: summariesError } = await supabase
+        .from('fee_summaries')
+        .select('*')
+        .eq('league_id', league_id)
+        .order('total_owed', { ascending: false })
+
+      if (summariesError) {
+        feeSummariesError = summariesError
+      } else if (summaries) {
+        feeSummaries = summaries
+      }
+
+      const { data: transactionSummary } = await supabase
+        .from('transactions')
+        .select('roster_id, fee_amount, type')
+        .eq('league_id', league_id)
+
+      const ownerNameMap = new Map<number, string>()
+      feeSummaries.forEach((summary: any) => {
+        ownerNameMap.set(Number(summary.roster_id), summary.owner_name)
+      })
+
+      if (transactionSummary) {
+        const statsMap = new Map<number, { transactions_used: number; paid_transactions: number; free_transactions_remaining: number }>()
+        transactionSummary.forEach((record: any) => {
+          const rosterId = Number(record.roster_id)
+          const entry = statsMap.get(rosterId) || { transactions_used: 0, paid_transactions: 0, free_transactions_remaining: 10 }
+          if (['waiver', 'free_agent'].includes(record.type)) {
+            entry.transactions_used += 1
+            entry.free_transactions_remaining = Math.max(0, entry.free_transactions_remaining - 1)
+          }
+          if (Number(record.fee_amount || 0) > 0) {
+            entry.paid_transactions += 1
+          }
+          statsMap.set(rosterId, entry)
+        })
+        transactionStats = Array.from(statsMap.entries()).map(([rosterId, value]) => ({
+          roster_id: rosterId,
+          owner_name: ownerNameMap.get(rosterId) || `Roster ${rosterId}`,
+          ...value
+        }))
+      }
+
+      const { data: feeEvents } = await supabase
+        .from('inactive_penalties')
+        .select('*')
+        .eq('league_id', league_id)
+        .order('created_at', { ascending: false })
+        .limit(10)
+
+      recentFees = feeEvents || []
+    }
+
     return Response.json({
       database_info: leagueDebugInfo,
       specific_league: specificLeague,
-      sleeper_api_test: sleeperResponse
+      sleeper_api_test: sleeperResponse,
+      fee_summaries: feeSummaries,
+      fee_summaries_error: feeSummariesError,
+      transaction_stats: transactionStats,
+      recent_fees: recentFees
     }, { headers: corsHeaders })
 
   } catch (error) {
     console.error('Error:', error)
-    return Response.json({ error: error.message }, { status: 500, headers: corsHeaders })
+    const message = error instanceof Error ? error.message : String(error)
+    return Response.json({ error: message }, { status: 500, headers: corsHeaders })
   }
 })

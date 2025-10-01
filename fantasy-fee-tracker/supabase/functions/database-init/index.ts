@@ -17,8 +17,8 @@ Deno.serve(async (req) => {
     const startTime = Date.now();
     const { league_id: actualLeagueId, current_week } = await req.json();
     
-    console.log(`🎯 INITIALIZING DATABASE for 2025 SEASON`);
-    console.log(`📊 League ID: ${actualLeagueId}`);
+  console.log(`🎯 INITIALIZING DATABASE for 2025 SEASON`);
+  console.log(`📊 Sleeper League ID: ${actualLeagueId}`);
     console.log(`📅 Current Week: ${current_week || 'TBD'}`);
 
     // Initialize Supabase client
@@ -53,6 +53,18 @@ Deno.serve(async (req) => {
     }) || [];
 
     console.log(`👥 Created ${userMappings.length} user mappings`);
+
+    const { data: leagueRecord, error: leagueLookupError } = await supabase
+      .from('leagues')
+      .select('*')
+      .eq('sleeper_league_id', actualLeagueId)
+      .single();
+
+    if (leagueLookupError || !leagueRecord) {
+      throw new Error(`League configuration not found for Sleeper league ${actualLeagueId}`);
+    }
+
+    const databaseLeagueId = leagueRecord.id;
 
     // ========== FETCH ALL HISTORICAL TRANSACTIONS (WEEKS 1 TO CURRENT) ==========
     const actualCurrentWeek = current_week || leagueData?.settings?.leg || 3;
@@ -120,7 +132,7 @@ Deno.serve(async (req) => {
       // Calculate final stats for each roster
       for (const [rosterId, rosterTransactions] of transactionsByRoster.entries()) {
         const stats = transactionStats.get(rosterId);
-        const ownerName = userMappings.find(um => um.roster_id === rosterId)?.display_name || `Team ${rosterId}`;
+  const ownerName = userMappings.find((um: any) => um.roster_id === rosterId)?.display_name || `Team ${rosterId}`;
         
         if (stats) {
           stats.total_transactions = rosterTransactions.length;
@@ -139,32 +151,38 @@ Deno.serve(async (req) => {
     }
 
     // ========== INITIALIZE DATABASE ==========
-    console.log(`💾 Initializing fee_summary table with historical data...`);
+  console.log(`💾 Initializing fee_summaries table with historical data...`);
     
     // Clear existing data for this league first
     console.log(`🗑️ Clearing existing data for league ${actualLeagueId}...`);
     await supabase
-      .from('fee_summary')
+      .from('fee_summaries')
       .delete()
-      .eq('league_id', actualLeagueId);
+      .eq('league_id', databaseLeagueId);
 
     // Insert initial data for each roster
     for (const stats of transactionStats.values()) {
       try {
-        const ownerName = userMappings.find(um => um.roster_id === stats.roster_id)?.display_name || `Team ${stats.roster_id}`;
+  const ownerName = userMappings.find((um: any) => um.roster_id === stats.roster_id)?.display_name || `Team ${stats.roster_id}`;
         const transactionFees = stats.paid_transactions * 2;
         
-        await supabase.from('fee_summary').insert({
-          league_id: actualLeagueId,
+        await supabase.from('fee_summaries').insert({
+          league_id: databaseLeagueId,
           roster_id: stats.roster_id,
           owner_name: ownerName,
-          total_owed: transactionFees, // Starting with historical transaction fees
+          loss_fees: 0,
+          transaction_fees: transactionFees,
+          inactive_fees: 0,
+          high_score_credits: 0,
+          other_fees: 0,
+          total_owed: transactionFees,
           total_paid: 0,
+          balance: transactionFees,
           updated_week: actualCurrentWeek,
-          // Transaction tracking fields
           free_transactions_remaining: stats.free_remaining,
           total_transactions: stats.total_transactions,
-          paid_transactions: stats.paid_transactions
+          paid_transactions: stats.paid_transactions,
+          mulligan_used: false
         });
         
         console.log(`💾 Initialized ${ownerName}: ${stats.total_transactions} transactions, ${stats.free_remaining} free remaining, $${transactionFees} transaction fees`);

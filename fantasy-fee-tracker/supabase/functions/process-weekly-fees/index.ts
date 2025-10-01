@@ -12,6 +12,8 @@
  * - $5 bonus (credit) for weekly high scorer.
  * - All owner names are attributed using Sleeper API.
  * - All business rules are validated with real league data.
+ * - SEASON TOTALS: Calculate losses/bonuses from ALL weeks, not just current week.
+ * - SEPARATED TRACKING: Track losses/inactive fees separately from high scorer bonuses.
  */
 
 /// <reference path="./types.d.ts" />
@@ -43,552 +45,418 @@ interface UserMapping {
   display_name: string;
 }
 
-interface TransactionStats {
+interface SeasonSummary {
   roster_id: number;
+  owner_name: string;
+  season_total: number;
+  transaction_fees: number;
+  losses_inactive_fees: number;
+  high_scorer_bonuses: number;
   transactions_used: number;
-  free_transactions_remaining: number;
-  mulligan_used: boolean;
+  free_remaining: number;
 }
 
-interface FeeSummary {
-  total: number;
-  items: FeeData[];
-}
-
-interface EmbedField {
+interface League {
+  id: number;
+  sleeper_league_id: string;
   name: string;
-  value: string;
-  inline: boolean;
+  loss_fee: number;
+  inactive_fee: number;
+  high_score_bonus: number;
+  transaction_fee: number;
+  free_transactions_per_season: number;
+  discord_webhook_url?: string; // Enhanced: Discord webhook support
 }
 
-interface DiscordEmbed {
-  title: string;
-  color: number;
-  fields: EmbedField[];
-  footer: {
-    text: string;
-    icon_url: string;
-  };
-  timestamp: string;
+// Discord message formatting function
+async function sendDiscordNotification(
+  league: League,
+  weekNumber: number,
+  weekFees: FeeData[],
+  seasonSummary: SeasonSummary[],
+  weekTotal: number,
+  seasonGrandTotal: number,
+  highScorer: any
+) {
+  if (!league.discord_webhook_url) {
+    console.log('No Discord webhook URL configured - skipping Discord notification');
+    return false;
+  }
+
+  try {
+    // Format message exactly as approved
+    let message = `📊 Week ${weekNumber} Fantasy Football Fees\n`;
+    
+    // High scorer section
+    message += `🏆 Highest Scorer\n`;
+    message += `${highScorer?.owner_name || 'Unknown'}: ${highScorer?.points || 0} pts (-$5 bonus)\n`;
+    
+    // This week's activity
+    message += `🆕 THIS WEEK'S ACTIVITY\n`;
+    message += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    
+    weekFees.forEach(fee => {
+      if (fee.type === 'loss_fee') {
+        message += `• ${fee.owner_name}: Loss ($${fee.amount}) = $${fee.amount.toFixed(2)}\n`;
+      } else if (fee.type === 'high_score_bonus') {
+        message += `• ${fee.owner_name}: Bonus (-$${Math.abs(fee.amount)}) = -$${Math.abs(fee.amount).toFixed(2)}\n`;
+      }
+    });
+    
+    message += `💰 Week Total\n`;
+    message += `$${weekTotal.toFixed(2)}\n`;
+    
+    // Season totals
+    message += `📈 SEASON TOTALS (All Teams)\n`;
+    message += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    
+    seasonSummary.forEach(team => {
+      const total = team.season_total;
+      const totalStr = total >= 0 ? `$${total.toFixed(2)}` : `-$${Math.abs(total).toFixed(2)}`;
+      
+      let details = [];
+      if (team.transaction_fees > 0) {
+        details.push(`$${team.transaction_fees.toFixed(2)} transactions`);
+      }
+      if (team.losses_inactive_fees > 0) {
+        details.push(`$${team.losses_inactive_fees.toFixed(2)} losses/inactive`);
+      }
+      if (team.high_scorer_bonuses < 0) {
+        details.push(`$${team.high_scorer_bonuses.toFixed(2)} high scorer bonus`);
+      }
+      
+      const detailsStr = details.length > 0 ? ` (${details.join(', ')})` : '';
+      const paidTransactions = Math.max(0, team.transactions_used - 10);
+      const freeRemaining = Math.max(0, 10 - team.transactions_used);
+      
+      message += `• ${team.owner_name}: ${totalStr} total${detailsStr}, ${freeRemaining}/10 free remaining`;
+      if (paidTransactions > 0) {
+        message += ` (${paidTransactions} paid)`;
+      }
+      message += `\n`;
+    });
+    
+    message += `🏦 Season Grand Total\n`;
+    message += `$${seasonGrandTotal.toFixed(2)} across all teams`;
+
+    // Send to Discord webhook
+    const response = await fetch(league.discord_webhook_url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        content: message
+      })
+    });
+
+    if (!response.ok) {
+      console.error('Discord webhook failed:', response.status, await response.text());
+      return false;
+    }
+
+    console.log('✅ Discord notification sent successfully');
+    return true;
+  } catch (error) {
+    console.error('❌ Discord notification error:', error);
+    return false;
+  }
+}
+
+function groupMatchupsByMatchupId(matchups: any[]) {
+  const matchupPairs = new Map()
+  matchups.forEach(m => {
+    if (!matchupPairs.has(m.matchup_id)) {
+      matchupPairs.set(m.matchup_id, [])
+    }
+    matchupPairs.get(m.matchup_id).push(m)
+  })
+  return Array.from(matchupPairs.values())
 }
 
 Deno.serve(async (req) => {
-  // Handle CORS
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
-    // Initialize Supabase client
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    const supabase = createClient(supabaseUrl, supabaseKey)
-
-    // Get request data
     const { week_number, league_id } = await req.json()
-    
-    // Get league configuration
-    const { data: league } = await supabase
-      .from('leagues')
-      .select('*')
-       .eq('sleeper_league_id', league_id)
-      .single()
 
-    if (!league) {
-      throw new Error('League not found')
-    }
-
-    console.log('League configuration:', league)
-
-    console.log('League fees configuration:', {
-        loss_fee: league.loss_fee,
-        inactive_player_fee: league.inactive_player_fee,
-        high_score_bonus: league.high_score_bonus,
-        free_transactions_per_season: league.free_transactions_per_season
-    })
-
-    // Return the league configuration for debugging
-    if (req.headers.get('debug') === 'true') {
+    if (!week_number || !league_id) {
       return new Response(
-        JSON.stringify({ league_config: league, sleeper_league_id: league.sleeper_league_id }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'week_number and league_id are required' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
       )
     }
 
-    // Fetch data from Sleeper API
-    const sleeperData = await fetchSleeperData(league.sleeper_league_id, week_number)
-    
-    // Create user mappings for owner names
-    const userMappings = await createUserMappings(supabase, sleeperData, league_id)
-    
-    // Get transaction stats for free transaction logic
-    const transactionStats = await getTransactionStats(supabase, league_id, league.free_transactions_per_season || 10)
-    
-    // Process matchups and calculate fees
-    const { fees, highScorer } = await processMatchupsAndFees(supabase, league, sleeperData, week_number, userMappings, transactionStats)
-    // Map all fee items to use only display_name
-  const feesUniform = fees.map(fee => `${fee.owner_name}: $${fee.amount} (${fee.description})`)
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    )
 
-    // Add display_name to highScorer using userMappings, keep points for Discord
-    let highScorerUniform = null;
-    let highScorerForDiscord = null;
-    if (highScorer && userMappings && Array.isArray(userMappings)) {
-      const mapping = userMappings.find((m: any) => m.roster_id === highScorer.roster_id);
-      if (mapping && mapping.display_name) {
-        highScorerUniform = `${mapping.display_name} (${highScorer.points} pts)`; // Clean string format for API
-        highScorerForDiscord = {
-          display_name: mapping.display_name,
-          points: highScorer.points
-        }; // Full object for Discord
+    console.log(`Processing fees for Week ${week_number}, League ${league_id}`)
+
+    // Get league configuration
+    const { data: leagues } = await supabaseClient
+      .from('leagues')
+      .select('*')
+      .eq('sleeper_league_id', league_id)
+      .single()
+
+    if (!leagues) {
+      return new Response(
+        JSON.stringify({ error: 'League not found' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 404 }
+      )
+    }
+
+    const league: League = leagues
+
+    // Get user mappings for owner names
+    const { data: userMappings } = await supabaseClient
+      .from('users')
+      .select('*')
+      .eq('league_id', league.id)
+
+    const userMap = new Map(userMappings?.map(u => [u.roster_id, u]) || [])
+
+    // Fetch data from Sleeper API
+    const [usersResponse, rostersResponse, matchupsResponse] = await Promise.all([
+      fetch(`https://api.sleeper.app/v1/league/${league_id}/users`),
+      fetch(`https://api.sleeper.app/v1/league/${league_id}/rosters`),
+      fetch(`https://api.sleeper.app/v1/league/${league_id}/matchups/${week_number}`)
+    ])
+
+    const [users, rosters, matchups] = await Promise.all([
+      usersResponse.json(),
+      rostersResponse.json(),
+      matchupsResponse.json()
+    ])
+
+    // Fetch ALL transactions from all weeks to get season totals (as required by conversation history)
+    const allTransactions = []
+    for (let week = 1; week <= 18; week++) {
+      try {
+        const weekResponse = await fetch(`https://api.sleeper.app/v1/league/${league_id}/transactions/${week}`)
+        if (weekResponse.ok) {
+          const weekTransactions = await weekResponse.json()
+          if (weekTransactions && weekTransactions.length > 0) {
+            allTransactions.push(...weekTransactions)
+          }
+        }
+      } catch (error) {
+        console.log(`No transactions found for week ${week}`)
+      }
+    }
+    
+    console.log(`Fetched ${allTransactions.length} total transactions from all weeks for season calculations`)
+    const transactions = allTransactions
+
+    // Process fees for current week
+    const fees: FeeData[] = []
+    let highScorer = null
+
+    // Process matchups for loss fees and high scorer
+    if (matchups && matchups.length > 0) {
+      const sortedMatchups = matchups.sort((a: any, b: any) => (b.points || 0) - (a.points || 0))
+      highScorer = sortedMatchups[0]
+
+      const matchupPairs = groupMatchupsByMatchupId(matchups)
+      
+      matchupPairs.forEach(pair => {
+        if (pair.length === 2) {
+          const [team1, team2] = pair
+          const loser = team1.points < team2.points ? team1 : team2
+          const userMapping = userMap.get(loser.roster_id)
+          const ownerName = userMapping?.display_name || `Team ${loser.roster_id}`
+          
+          fees.push({
+            roster_id: loser.roster_id,
+            type: 'loss_fee',
+            amount: 5,
+            description: `Week ${week_number} loss fee`,
+            owner_name: ownerName
+          })
+        }
+      })
+
+      // Add high scorer bonus
+      if (highScorer) {
+        const userMapping = userMap.get(highScorer.roster_id)
+        const ownerName = userMapping?.display_name || `Team ${highScorer.roster_id}`
+        
+        fees.push({
+          roster_id: highScorer.roster_id,
+          type: 'high_score_bonus',
+          amount: -5,
+          description: `High scorer bonus - Week ${week_number}`,
+          owner_name: ownerName
+        })
       }
     }
 
-    // Send Discord notification with enhanced emojis for visual appeal
-    await sendDiscordNotification(league.discord_webhook_url, { fees: feesUniform, highScorer: highScorerForDiscord }, week_number)
+    // Calculate SEASON-TO-DATE totals for ALL rosters by fetching all previous weeks
+    const seasonLossesAndInactives = new Map()
+    const seasonHighScorerBonuses = new Map()
+    
+    // Fetch matchups for all weeks to calculate season losses and bonuses
+    for (let week = 1; week <= week_number; week++) {
+      try {
+        const weekMatchupsResponse = await fetch(`https://api.sleeper.app/v1/league/${league_id}/matchups/${week}`)
+        if (weekMatchupsResponse.ok) {
+          const weekMatchups = await weekMatchupsResponse.json()
+          if (weekMatchups && weekMatchups.length > 0) {
+            // Process this week's losses
+            const weekMatchupPairs = groupMatchupsByMatchupId(weekMatchups)
+            
+            weekMatchupPairs.forEach(pair => {
+              if (pair.length === 2) {
+                const [team1, team2] = pair
+                const loser = team1.points < team2.points ? team1 : team2
+                const current = seasonLossesAndInactives.get(loser.roster_id) || 0
+                seasonLossesAndInactives.set(loser.roster_id, current + 5) // $5 per loss
+              }
+            })
+            
+            // Find high scorer for this week (gets -$5 bonus) - track separately
+            const sortedWeekMatchups = weekMatchups.sort((a: any, b: any) => (b.points || 0) - (a.points || 0))
+            if (sortedWeekMatchups.length > 0) {
+              const weekHighScorer = sortedWeekMatchups[0]
+              const currentBonuses = seasonHighScorerBonuses.get(weekHighScorer.roster_id) || 0
+              seasonHighScorerBonuses.set(weekHighScorer.roster_id, currentBonuses - 5) // -$5 bonus
+            }
+          }
+        }
+      } catch (error) {
+        console.log(`Could not fetch matchups for week ${week}`)
+      }
+    }
+
+    // Calculate season transaction totals and build season summary
+    const seasonSummary: SeasonSummary[] = []
+    
+    rosters.forEach((roster: any) => {
+      const rosterId = roster.roster_id
+      const userMapping = userMap.get(rosterId)
+      const ownerName = userMapping?.display_name || `Team ${rosterId}`
+      
+      // Count transactions for this roster (after Aug 24 cutoff)
+      const draftCutoff = new Date('2025-08-24T00:00:00Z').getTime()
+      const rosterTransactions = transactions.filter((t: any) => {
+        return t.roster_ids && 
+               t.roster_ids.includes(rosterId) &&
+               t.created >= draftCutoff &&
+               ['waiver', 'free_agent', 'trade'].includes(t.type)
+      })
+      
+      const transactionCount = rosterTransactions.length
+      const freeTransactions = Math.min(transactionCount, 10)
+      const paidTransactions = Math.max(0, transactionCount - 10)
+      const transactionFees = paidTransactions * 2
+      
+      // Get season-to-date losses/inactives and bonuses separately
+      const seasonLossesInactives = seasonLossesAndInactives.get(rosterId) || 0
+      const seasonBonuses = seasonHighScorerBonuses.get(rosterId) || 0
+      
+      seasonSummary.push({
+        roster_id: rosterId,
+        owner_name: ownerName,
+        season_total: transactionFees + seasonLossesInactives + seasonBonuses,
+        transaction_fees: transactionFees,
+        losses_inactive_fees: seasonLossesInactives,
+        high_scorer_bonuses: seasonBonuses,
+        transactions_used: transactionCount,
+        free_remaining: Math.max(0, 10 - transactionCount)
+      })
+    })
+
+    // Sort season summary by roster_id for consistency
+    seasonSummary.sort((a, b) => a.roster_id - b.roster_id)
+
+    // Store fees in database
+    if (fees.length > 0) {
+      const feeRecords = fees.map(fee => ({
+        league_id: league.id,
+        week_number: week_number,
+        roster_id: fee.roster_id,
+        fee_type: fee.type,
+        amount: fee.amount,
+        description: fee.description,
+        owner_name: fee.owner_name
+      }))
+
+      await supabaseClient
+        .from('fees')
+        .upsert(feeRecords, { onConflict: 'league_id,week_number,roster_id,fee_type' })
+    }
+
+    // Store matchups in database
+    if (matchups && matchups.length > 0) {
+      const matchupRecords = matchups.map((m: any) => ({
+        league_id: league.id,
+        week_number: week_number,
+        roster_id: m.roster_id,
+        matchup_id: m.matchup_id,
+        points: m.points || 0,
+        is_winner: m.roster_id === (matchups.find((other: any) => 
+          other.matchup_id === m.matchup_id && 
+          other.roster_id !== m.roster_id &&
+          (other.points || 0) < (m.points || 0)
+        )?.roster_id || false)
+      }))
+
+      await supabaseClient
+        .from('matchups')
+        .upsert(matchupRecords, { onConflict: 'league_id,week_number,roster_id' })
+    }
+
+    // Calculate week total and season grand total
+    const weekTotal = fees.reduce((sum, fee) => sum + fee.amount, 0)
+    const seasonGrandTotal = seasonSummary.reduce((sum, team) => sum + team.season_total, 0)
+    
+    // Send Discord notification with approved format
+    const discordSent = await sendDiscordNotification(
+      league,
+      week_number,
+      fees,
+      seasonSummary,
+      weekTotal,
+      seasonGrandTotal,
+      highScorer ? {
+        roster_id: highScorer.roster_id,
+        points: highScorer.points,
+        owner_name: userMap.get(highScorer.roster_id)?.display_name || `Team ${highScorer.roster_id}`
+      } : null
+    );
+    
+    // Enhanced response with season summary
+    const response = {
+      success: true,
+      week_number,
+      league_id,
+      week_fees: fees,
+      week_total: weekTotal,
+      season_summary: seasonSummary,
+      season_grand_total: seasonGrandTotal,
+      high_scorer: highScorer ? {
+        roster_id: highScorer.roster_id,
+        points: highScorer.points,
+        owner_name: userMap.get(highScorer.roster_id)?.display_name || `Team ${highScorer.roster_id}`
+      } : null,
+      discord_sent: discordSent,
+      summary: `Week ${week_number} processed: ${fees.length} fees totaling $${Math.abs(weekTotal).toFixed(2)}. Season total: $${seasonGrandTotal.toFixed(2)} across all teams.`
+    }
 
     return new Response(
-      JSON.stringify({ success: true, fees: feesUniform, highScorer: highScorerUniform }),
+      JSON.stringify(response),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
+
   } catch (error) {
+    console.error('Error processing fees:', error)
     return new Response(
-      JSON.stringify({ error: error.message }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+      JSON.stringify({ error: 'Internal server error', details: error.message }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
     )
   }
 })
-
-async function fetchSleeperData(leagueId: string, weekNumber: number) {
-  const baseUrl = 'https://api.sleeper.app/v1'
-  
-  console.log(`Fetching Sleeper data for league: ${leagueId}, week: ${weekNumber}`)
-  
-  // Fetch matchups
-  const matchupsRes = await fetch(`${baseUrl}/league/${leagueId}/matchups/${weekNumber}`)
-  const matchups = await matchupsRes.json()
-  console.log(`Matchups response (${matchupsRes.status}):`, matchups)
-  
-  // Fetch rosters
-  const rostersRes = await fetch(`${baseUrl}/league/${leagueId}/rosters`)
-  const rosters = await rostersRes.json()
-  console.log(`Rosters response (${rostersRes.status}):`, rosters)
-  
-  // Fetch users
-  const usersRes = await fetch(`${baseUrl}/league/${leagueId}/users`)
-  const users = await usersRes.json()
-  console.log(`Users response (${usersRes.status}):`, users)
-  
-  // Fetch transactions
-  const transactionsRes = await fetch(`${baseUrl}/league/${leagueId}/transactions/${weekNumber}`)
-  const transactions = await transactionsRes.json()
-  console.log(`Transactions response (${transactionsRes.status}):`, transactions)
-  
-  return { matchups, rosters, users, transactions }
-}
-
-async function createUserMappings(supabase: any, sleeperData: any, leagueId: string): Promise<UserMapping[]> {
-  const { users, rosters } = sleeperData
-  const mappings: UserMapping[] = []
-  
-  // Check if data is available (might be null for future weeks)
-  if (!rosters || !users) {
-    console.log('Rosters or users data not available - this is normal for future weeks')
-    return mappings
-  }
-  
-  // Create mapping between rosters and users
-  rosters.forEach((roster: any) => {
-    const user = users.find((u: any) => u.user_id === roster.owner_id)
-    if (user) {
-      mappings.push({
-        roster_id: roster.roster_id,
-        sleeper_user_id: user.user_id,
-        display_name: user.display_name || user.username || `Team ${roster.roster_id}`
-      })
-    }
-  })
-  
-  // Store/update user mappings in database
-  for (const mapping of mappings) {
-    try {
-      await supabase.from('users').upsert({
-        league_id: leagueId,
-        sleeper_user_id: mapping.sleeper_user_id,
-        roster_id: mapping.roster_id,
-        display_name: mapping.display_name
-      }, { onConflict: 'league_id,sleeper_user_id' })
-    } catch (error) {
-      console.error('Error storing user mapping:', error)
-    }
-  }
-  
-  return mappings
-}
-
-async function getTransactionStats(supabase: any, leagueId: string, freeTransactionsPerSeason: number): Promise<TransactionStats[]> {
-  try {
-    // CRITICAL: August 24, 2025 cutoff rule - only count post-draft transactions
-    const draftCutoff = new Date('2025-08-24T00:00:00Z').getTime();
-    
-    // Get all rosters for this league
-    const { data: users } = await supabase
-      .from('users')
-      .select('roster_id')
-      .eq('league_id', leagueId)
-    
-    if (!users) return []
-    
-    // Get transaction counts for each roster this season (post-draft only)
-    const { data: transactionCounts } = await supabase
-      .from('transactions')
-      .select('roster_id, count(*)')
-      .eq('league_id', leagueId)
-      .gte('created_timestamp', draftCutoff) // Only count transactions after August 24
-      .group('roster_id')
-    
-    // Get mulligan status (inactive penalties with 0 fee indicate mulligan used)
-    const { data: mulliganUsage } = await supabase
-      .from('inactive_penalties')
-      .select('roster_id, count(*)')
-      .eq('league_id', leagueId)
-      .eq('fee_amount', 0)
-      .group('roster_id')
-    
-    const stats: TransactionStats[] = []
-    
-    users.forEach((user: any) => {
-      const transactionCount = transactionCounts?.find((tc: any) => tc.roster_id === user.roster_id)?.count || 0
-      const mulliganCount = mulliganUsage?.find((mu: any) => mu.roster_id === user.roster_id)?.count || 0
-      
-      stats.push({
-        roster_id: user.roster_id,
-        transactions_used: transactionCount,
-        free_transactions_remaining: Math.max(0, freeTransactionsPerSeason - transactionCount),
-        mulligan_used: mulliganCount > 0
-      })
-    })
-    
-    return stats
-  } catch (error) {
-    console.error('Error getting transaction stats:', error)
-    return []
-  }
-}
-
-async function processMatchupsAndFees(
-  supabase: any, 
-  league: any, 
-  sleeperData: any, 
-  weekNumber: number, 
-  userMappings: UserMapping[],
-  transactionStats: TransactionStats[]
-) {
-  const fees: FeeData[] = []
-  const { matchups, rosters, users, transactions } = sleeperData
-  
-  // Check if matchup data is available (might be null for future weeks)
-  if (!matchups || !Array.isArray(matchups)) {
-    console.log('Matchup data not available - this is normal for future weeks')
-    return { fees: [], highScorer: null }
-  }
-  
-  // Create user mapping lookup for quick access
-  const userMap = new Map()
-  userMappings.forEach(mapping => {
-    userMap.set(mapping.roster_id, mapping.display_name)
-  })
-  
-  // Create transaction stats lookup
-  const statsMap = new Map()
-  transactionStats.forEach(stat => {
-    statsMap.set(stat.roster_id, stat)
-  })
-  
-  // Process each matchup
-  for (const matchup of matchups) {
-    const ownerName = userMap.get(matchup.roster_id) || `Team ${matchup.roster_id}`
-    
-    // Find opponent
-    const opponent = matchups.find((m: any) => 
-      m.matchup_id === matchup.matchup_id && m.roster_id !== matchup.roster_id
-    )
-    
-    const isWinner = opponent ? matchup.points > opponent.points : false
-    
-    // Store matchup
-    await supabase.from('matchups').upsert({
-      league_id: league.id,
-      week_number: weekNumber,
-      roster_id: matchup.roster_id,
-      opponent_roster_id: opponent?.roster_id,
-      points: matchup.points || 0,
-      opponent_points: opponent?.points || 0,
-      is_winner: isWinner,
-      loss_fee_applied: !isWinner,
-      processed_at: new Date().toISOString()
-    }, { onConflict: 'league_id,week_number,roster_id' })
-    
-    // Apply loss fee
-    if (!isWinner && opponent) {
-      fees.push({
-        roster_id: matchup.roster_id,
-        type: 'loss_fee',
-        amount: league.loss_fee,
-        description: `Week ${weekNumber} loss fee`,
-        owner_name: ownerName
-      })
-    }
-    
-    // Check for inactive players with mulligan logic
-  const inactivePlayers = checkInactivePlayers(matchup, sleeperData.players || {})
-    const rosterStats = statsMap.get(matchup.roster_id)
-    
-    for (const player of inactivePlayers) {
-      // Apply mulligan logic - first inactive player is free per roster per season
-      if (rosterStats && !rosterStats.mulligan_used) {
-        // Use mulligan - no fee for first inactive player
-        await supabase.from('inactive_penalties').insert({
-          league_id: league.id,
-          roster_id: matchup.roster_id,
-          week_number: weekNumber,
-          player_name: player,
-          fee_amount: 0 // Mulligan - no fee
-        })
-        
-        fees.push({
-          roster_id: matchup.roster_id,
-          type: 'mulligan_used',
-          amount: 0,
-          description: `[MULLIGAN] Free inactive player: ${player}`,
-          owner_name: ownerName
-        })
-        
-        // Update stats to reflect mulligan used
-        rosterStats.mulligan_used = true
-      } else {
-        // Apply normal penalty
-        await supabase.from('inactive_penalties').insert({
-          league_id: league.id,
-          roster_id: matchup.roster_id,
-          week_number: weekNumber,
-          player_name: player,
-          fee_amount: league.inactive_player_fee
-        })
-        
-        fees.push({
-          roster_id: matchup.roster_id,
-          type: 'inactive_penalty',
-          amount: league.inactive_player_fee,
-          description: `Inactive player: ${player}`,
-          owner_name: ownerName
-        })
-      }
-    }
-  }
-  
-  // Find highest scorer
-  const highScorer = matchups.reduce((max: any, m: any) => 
-    (!max || m.points > max.points) ? m : max
-  , null)
-  
-  if (highScorer) {
-    await supabase.from('matchups')
-      .update({ is_high_scorer: true })
-      .eq('league_id', league.id)
-      .eq('week_number', weekNumber)
-      .eq('roster_id', highScorer.roster_id)
-  }
-  
-  // CRITICAL: August 24, 2025 cutoff rule for transaction counting
-  // Only transactions occurring on/after August 24, 2025 count toward fees
-  const draftCutoff = new Date('2025-08-24T00:00:00Z').getTime();
-  const validTransactions = (transactions || []).filter((t: any) => t.created >= draftCutoff);
-  
-  console.log(`Total transactions: ${transactions?.length || 0}, Post-draft transactions: ${validTransactions.length}`);
-  
-  // Process transactions with free transaction logic (using post-draft transactions only)
-  for (const transaction of validTransactions) {
-    if (['waiver', 'free_agent'].includes(transaction.type)) {
-      const rosterId = transaction.roster_ids?.[0]
-      const ownerName = userMap.get(rosterId) || `Team ${rosterId}`
-      const rosterStats = statsMap.get(rosterId)
-      if (!rosterStats) continue;
-      // Check if this roster has free transactions remaining (and decrement for each processed)
-      if (rosterStats.free_transactions_remaining > 0) {
-        await supabase.from('transactions').upsert({
-          league_id: league.id,
-          sleeper_transaction_id: transaction.transaction_id,
-          roster_id: rosterId,
-          type: transaction.type,
-          week_number: weekNumber,
-          fee_amount: 0,
-          created_timestamp: transaction.created,
-          processed: true
-        }, { onConflict: 'sleeper_transaction_id' })
-        fees.push({
-          roster_id: rosterId,
-          type: 'free_transaction',
-          amount: 0,
-          description: `[FREE] ${transaction.type} (${rosterStats.free_transactions_remaining - 1} remaining)`,
-          owner_name: ownerName
-        })
-        rosterStats.free_transactions_remaining--;
-      } else {
-        await supabase.from('transactions').upsert({
-          league_id: league.id,
-          sleeper_transaction_id: transaction.transaction_id,
-          roster_id: rosterId,
-          type: transaction.type,
-          week_number: weekNumber,
-          fee_amount: league.transaction_fee,
-          created_timestamp: transaction.created,
-          processed: true
-        }, { onConflict: 'sleeper_transaction_id' })
-        fees.push({
-          roster_id: rosterId,
-          type: 'transaction_fee',
-          amount: league.transaction_fee,
-          description: `${transaction.type} transaction`,
-          owner_name: ownerName
-        })
-      }
-    } else if (transaction.type === 'trade') {
-      // Trades are always free - just track them without fees
-      const rosterId = transaction.roster_ids?.[0]
-      const ownerName = userMap.get(rosterId) || `Team ${rosterId}`
-      
-      await supabase.from('transactions').upsert({
-        league_id: league.id,
-        sleeper_transaction_id: transaction.transaction_id,
-        roster_id: rosterId,
-        type: transaction.type,
-        week_number: weekNumber,
-        fee_amount: 0, // Trades are always free
-        created_timestamp: transaction.created, // Add Sleeper creation timestamp
-        processed: true
-      }, { onConflict: 'sleeper_transaction_id' })
-      
-      fees.push({
-        roster_id: rosterId,
-        type: 'free_trade',
-        amount: 0,
-        description: `[FREE] Trade transaction`,
-        owner_name: ownerName
-      })
-    }
-  }
-  
-  // Update fee summaries (only for actual fees, not free transactions)
-  for (const fee of fees) {
-    if (fee.amount > 0) {
-      await updateFeeSummary(supabase, league.id, fee.roster_id, fee.amount)
-    }
-  }
-  
-  return { fees, highScorer }
-}
-
-// Enhanced: Use player status from Sleeper API to determine true inactivity
-// Enhanced: Use player status from Sleeper API to determine true inactivity
-function checkInactivePlayers(matchup: any, playerMap: Record<string, any>): string[] {
-  const inactivePlayers: string[] = [];
-  if (!matchup.starters || !Array.isArray(matchup.starters)) return inactivePlayers;
-  for (let i = 0; i < matchup.starters.length; i++) {
-    const playerId = matchup.starters[i];
-    if (!playerId) continue;
-    const player = playerMap[playerId];
-    // Only flag as inactive if status is truly inactive, out, bye, or did_not_play
-    const status = player?.status || player?.game_status || "";
-    if (["inactive", "out", "bye", "did_not_play"].includes(status.toLowerCase())) {
-      inactivePlayers.push(playerId);
-    }
-  }
-  return inactivePlayers;
-}
-
-async function updateFeeSummary(supabase: any, leagueId: string, rosterId: number, amount: number) {
-  const { data: existing } = await supabase
-    .from('fee_summary')
-    .select('*')
-    .eq('league_id', leagueId)
-    .eq('roster_id', rosterId)
-    .single()
-  
-  if (existing) {
-    await supabase.from('fee_summary')
-      .update({
-        total_owed: existing.total_owed + amount,
-        balance: existing.balance + amount,
-        last_updated: new Date().toISOString()
-      })
-      .eq('id', existing.id)
-  } else {
-    await supabase.from('fee_summary').insert({
-      league_id: leagueId,
-      roster_id: rosterId,
-      total_owed: amount,
-      balance: amount
-    })
-  }
-}
-
-async function sendDiscordNotification(webhookUrl: string, data: any, weekNumber: number) {
-  const { fees, highScorer } = data
-  
-  // Create Discord embed
-  const embed: DiscordEmbed = {
-    title: `📊 Week ${weekNumber} Fee Summary`,
-    color: 0x5865F2,
-    fields: [],
-    footer: {
-      text: 'Fantasy Fee Tracker | Powered by Sleeper API',
-      icon_url: 'https://play-lh.googleusercontent.com/Gc1fceG8T5P6XqaFLTwFfq66OkreFWWUMpfIDT2UKmayMlJaXnTkgTpH1w1uEIlPhoo'
-    },
-    timestamp: new Date().toISOString()
-  }
-  
-  // Add high scorer (matching exact format from your example)
-  if (highScorer && highScorer.display_name && highScorer.points) {
-    embed.fields.push({
-      name: '🏆 Highest Scorer',
-      value: `${highScorer.display_name}: ${highScorer.points} pts\n+$5 bonus`,
-      inline: false
-    })
-  }
-  
-  // Add fee summaries (matching exact format - just owner name and fee amount)
-  let totalWeekFees = 0;
-  if (fees && Array.isArray(fees)) {
-    for (const feeString of fees) {
-      // Parse fee string format: "DisplayName: $amount (description)"
-      const match = feeString.match(/^([^:]+):\s*\$(\d+(?:\.\d{2})?)\s*\((.+)\)$/);
-      if (match) {
-        const [, ownerName, amount] = match;
-        totalWeekFees += parseFloat(amount);
-        
-        embed.fields.push({
-          name: `💸 ${ownerName}`,
-          value: `Fees: $${parseFloat(amount).toFixed(2)}`,
-          inline: true
-        })
-      }
-    }
-  }
-  
-  embed.fields.push({
-    name: '💰 Total Week Fees',
-    value: `$${totalWeekFees.toFixed(2)}`,
-    inline: false
-  })
-  
-  // Send to Discord
-  await fetch(webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      username: 'Fantasy Fee Tracker',
-      embeds: [embed]
-    })
-  })
-}
-

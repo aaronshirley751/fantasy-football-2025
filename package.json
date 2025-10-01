@@ -1,4 +1,7 @@
 {
+  "scripts": {
+    "backfill:fee-summaries": "node backfill_fee_summaries.js"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.58.0"
   }

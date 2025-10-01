@@ -1,9 +1,9 @@
 name: Weekly Fantasy Football Fee Processing
 
 on:
-  # TEMPORARILY DISABLED - Run every Tuesday at 2 AM EST (after Monday Night Football)
-  # schedule:
-  #   - cron: '0 7 * * 2'  # 7 AM UTC = 2 AM EST during standard time
+  # Run every Tuesday at 2 AM EST (after Monday Night Football)
+  schedule:
+    - cron: '0 7 * * 2'  # 7 AM UTC = 2 AM EST during standard time
   
   # Allow manual triggering with week number input
   workflow_dispatch:
@@ -14,7 +14,7 @@ on:
         default: '1'
         type: string
       league_id:
-        description: 'League ID (leave default)'
+        description: 'League ID (2025 Production)'
         required: false
         default: '1249067741470539776'
         type: string
@@ -35,8 +35,8 @@ jobs:
         if [ "${{ github.event.inputs.week_number }}" != "" ]; then
           echo "week=${{ github.event.inputs.week_number }}" >> $GITHUB_OUTPUT
         else
-          # Simple calculation: week 1 starts September 5th, 2025
-          start_date="2025-09-04"
+          # NFL 2025 season starts September 5th, 2025 (Week 1)
+          start_date="2025-09-05"
           current_date=$(date +%Y-%m-%d)
           days_diff=$(( ($(date -d "$current_date" +%s) - $(date -d "$start_date" +%s)) / 86400 ))
           week_number=$(( days_diff / 7 + 1 ))
@@ -52,42 +52,20 @@ jobs:
           echo "week=$week_number" >> $GITHUB_OUTPUT
         fi
     
-    - name: Debug Database Setup
-      run: |
-        echo "🔍 Checking database state..."
-        
-        # First check what's in the database
-        debug_response=$(curl -s -X POST "https://jfeuobfjgqownybluvje.supabase.co/functions/v1/setup-league" \
-          -H "Content-Type: application/json" \
-          -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
-          -d '{}')
-        
-        echo "Database Debug Response:"
-        echo "$debug_response"
-        
-        # Setup league if needed
-        echo "🛠️ Setting up league configuration..."
-        setup_response=$(curl -s -X POST "https://jfeuobfjgqownybluvje.supabase.co/functions/v1/setup-league" \
-          -H "Content-Type: application/json" \
-          -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
-          -d '{"action": "setup_league"}')
-        
-        echo "Setup Response:"
-        echo "$setup_response"
-    
     - name: Process Weekly Fees
       run: |
-        echo "Processing fees for Week ${{ steps.get-week.outputs.week }}"
+        echo "🏈 Processing fees for Week ${{ steps.get-week.outputs.week }}"
+        echo "📊 League ID: ${{ github.event.inputs.league_id || '1249067741470539776' }}"
         
-        response=$(curl -s -X POST "${{ secrets.SUPABASE_FUNCTION_URL }}" \
+        response=$(curl -s -X POST "https://jfeuobfjgqownybluvje.supabase.co/functions/v1/process-weekly-fees" \
           -H "Content-Type: application/json" \
-          -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+          -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
           -d '{
             "week_number": ${{ steps.get-week.outputs.week }},
-            "league_id": "1249067741470539776"
+            "league_id": "${{ github.event.inputs.league_id || '1249067741470539776' }}"
           }')
         
-        echo "Function Response:"
+        echo "📋 Function Response:"
         echo "$response"
         
         # Check if the response contains an error
@@ -97,27 +75,45 @@ jobs:
           exit 1
         else
           echo "✅ Fees processed successfully"
+          
+          # Extract key data for summary
+          week_total=$(echo "$response" | jq -r '.week_total // "0"')
+          season_total=$(echo "$response" | jq -r '.season_grand_total // "0"')
+          fee_count=$(echo "$response" | jq -r '.week_fees | length // 0')
+          
+          echo "week_total=$week_total" >> $GITHUB_OUTPUT
+          echo "season_total=$season_total" >> $GITHUB_OUTPUT
+          echo "fee_count=$fee_count" >> $GITHUB_OUTPUT
         fi
+      id: process-fees
     
     - name: Create Processing Summary
       if: success()
       run: |
-        echo "## ��� Week ${{ steps.get-week.outputs.week }} Fee Processing Complete" >> $GITHUB_STEP_SUMMARY
+        echo "## 🏈 Week ${{ steps.get-week.outputs.week }} Fee Processing Complete" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "- **League ID**: ${{ github.event.inputs.league_id || 'd06f0672-2848-4b5d-86f5-9ab559605b4f' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **League ID**: ${{ github.event.inputs.league_id || '1249067741470539776' }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Week Number**: ${{ steps.get-week.outputs.week }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Week Total**: \$$${{ steps.process-fees.outputs.week_total }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Season Total**: \$$${{ steps.process-fees.outputs.season_total }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Fees Processed**: ${{ steps.process-fees.outputs.fee_count }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Processed At**: $(date)" >> $GITHUB_STEP_SUMMARY
         echo "- **Status**: ✅ Success" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "Check your Discord channel for the fee summary!" >> $GITHUB_STEP_SUMMARY
+        echo "### 🎯 Next Steps" >> $GITHUB_STEP_SUMMARY
+        echo "The fee data has been processed and stored in the database." >> $GITHUB_STEP_SUMMARY
+        echo "Use the approved Discord formatting script to generate messages if needed." >> $GITHUB_STEP_SUMMARY
     
     - name: Notify on Failure
       if: failure()
       run: |
         echo "## ❌ Week ${{ steps.get-week.outputs.week }} Fee Processing Failed" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "- **League ID**: ${{ github.event.inputs.league_id || 'd06f0672-2848-4b5d-86f5-9ab559605b4f' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **League ID**: ${{ github.event.inputs.league_id || '1249067741470539776' }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Week Number**: ${{ steps.get-week.outputs.week }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Failed At**: $(date)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "Check the logs above for error details." >> $GITHUB_STEP_SUMMARY
+        echo "### 🔍 Troubleshooting" >> $GITHUB_STEP_SUMMARY
+        echo "1. Check the workflow logs above for detailed error messages" >> $GITHUB_STEP_SUMMARY
+        echo "2. Verify the Supabase service role key is configured correctly" >> $GITHUB_STEP_SUMMARY
+        echo "3. Ensure the league data is accessible via Sleeper API" >> $GITHUB_STEP_SUMMARY

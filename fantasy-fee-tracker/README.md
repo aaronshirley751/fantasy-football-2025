@@ -10,7 +10,7 @@ A **production-ready** Fantasy Football fee tracker featuring incremental weekly
 - **🔄 INCREMENTAL PROCESSING**: Only processes NEW transactions each week - maintains cumulative data
 - **⚡ SUB-SECOND EXECUTION**: 400-600ms processing time for weekly cron jobs
 - **📊 REAL LEAGUE DATA**: Processing $32/week with 10 active teams and real owner names
-- **💾 DATABASE PERSISTENCE**: Proper schema integration with transactions + fee_summary tables
+- **💾 DATABASE PERSISTENCE**: Proper schema integration with transactions + fee_summaries tables
 - **📱 DISCORD NOTIFICATIONS**: Rich formatting with transaction status and rolling totals
 - **🎯 PRODUCTION VALIDATION**: Comprehensive auditing confirms system ready for live operation
 
@@ -64,7 +64,7 @@ A **production-ready** Fantasy Football fee tracker featuring incremental weekly
 
 ### **Database Architecture** 
 - **`transactions`**: Individual transaction records with Sleeper API integration
-- **`fee_summary`**: Accumulated fee totals per roster per season
+- **`fee_summaries`**: Accumulated fee totals per roster per season with breakdowns
 - **`leagues`**: League configuration with fee structures and Discord webhooks
 - **UUID Mapping**: Database UUID `a7d65b53-2ec5-4b38-94ee-7fcb97160989` ↔ Sleeper ID `1249067741470539776`
 
@@ -352,7 +352,7 @@ fantasy-fee-tracker/
 ### Database Access
 - **Supabase Dashboard**: https://supabase.com/dashboard/project/jfeuobfjgqownybluvje
 - **Direct Database URL**: Available in Supabase settings
-- **Tables Ready**: leagues, users, matchups, transactions, inactive_penalties, fee_summary
+- **Tables Ready**: leagues, users, matchups, transactions, inactive_penalties, fee_summaries
 
 ---
 

@@ -63,7 +63,7 @@
 
 ### [ ] **7. Transaction Database Verification**
 - [ ] Check `transactions` table for proper transaction_type and fees
-- [ ] Verify `fee_summary` only includes actual fees (not free transactions)
+- [ ] Verify `fee_summaries` only includes actual fees (not free transactions)
 - [ ] Confirm transaction stats calculations are accurate
 - [ ] Validate season-long transaction tracking per roster
 
@@ -89,7 +89,7 @@
 
 ### [ ] **10. Mulligan Database Verification**
 - [ ] Check `inactive_penalties` table for mulligan records (fee = 0)
-- [ ] Verify `fee_summary` excludes mulligan penalties from totals
+- [ ] Verify `fee_summaries` excludes mulligan penalties from totals
 - [ ] Confirm mulligan tracking persists across multiple weeks
 - [ ] Validate only one mulligan per roster per season
 

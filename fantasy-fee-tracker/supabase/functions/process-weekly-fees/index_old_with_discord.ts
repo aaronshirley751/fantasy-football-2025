@@ -1,0 +1,802 @@
+/**
+ * ===========================
+ *  FANTASY FEE TRACKER RULES
+ * ===========================
+ * - Only penalize truly inactive players (not zero-point scorers).
+ * - First inactive penalty per roster is a mulligan (waived, $0).
+ * - Only post-draft transactions (after Aug 24, 2025) count toward 10 free.
+ * - $2 fee for each waiver/free agent transaction after 10 free (per roster, per season).
+ * - Trades are always free (never count toward transaction fees).
+ * - $5 loss fee per weekly matchup loss.
+ * - $5 penalty for each inactive starter (after mulligan used).
+ * - $5 bonus (credit) for weekly high scorer.
+ * - All owner names are attributed using Sleeper API.
+ * - All business rules are validated with real league data.
+ */
+
+/// <reference path="./types.d.ts" />
+// Follow this setup guide to integrate the Deno language server with your editor:
+// https://deno.land/manual/getting_started/setup_your_environment
+// This enables autocomplete, go to definition, etc.
+
+// Setup type definitions for built-in Supabase Runtime APIs
+import "jsr:@supabase/functions-js/edge-runtime.d.ts"
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
+// Define types for better type safety
+interface FeeData {
+  roster_id: number;
+  type: string;
+  amount: number;
+  description: string;
+  owner_name?: string; // Enhanced: Add owner name
+}
+
+interface UserMapping {
+  roster_id: number;
+  sleeper_user_id: string;
+  display_name: string;
+}
+
+interface TransactionStats {
+  roster_id: number;
+  transactions_used: number;
+  free_transactions_remaining: number;
+  mulligan_used: boolean;
+}
+
+interface FeeSummary {
+  total: number;
+  items: FeeData[];
+}
+
+interface RosterFeeAccumulator {
+  roster_id: number;
+  owner_name?: string;
+  loss_fees: number;
+  transaction_fees: number;
+  inactive_fees: number;
+  high_score_credits: number;
+  other_fees: number;
+  total_transactions: number;
+  paid_transactions: number;
+  mulligan_used: boolean;
+}
+
+interface EmbedField {
+  name: string;
+  value: string;
+  inline: boolean;
+}
+
+interface DiscordEmbed {
+  title: string;
+  color: number;
+  fields: EmbedField[];
+  footer: {
+    text: string;
+    icon_url: string;
+  };
+  timestamp: string;
+}
+
+Deno.serve(async (req) => {
+  // Handle CORS
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
+  try {
+    // Initialize Supabase client
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    const supabase = createClient(supabaseUrl, supabaseKey)
+
+    // Get request data
+    const { week_number, league_id } = await req.json()
+    
+    // Get league configuration
+    const { data: league } = await supabase
+      .from('leagues')
+      .select('*')
+       .eq('sleeper_league_id', league_id)
+      .single()
+
+    if (!league) {
+      throw new Error('League not found')
+    }
+
+    console.log('League configuration:', league)
+
+    console.log('League fees configuration:', {
+        loss_fee: league.loss_fee,
+        inactive_player_fee: league.inactive_player_fee,
+        high_score_bonus: league.high_score_bonus,
+        free_transactions_per_season: league.free_transactions_per_season
+    })
+
+    // Return the league configuration for debugging
+    if (req.headers.get('debug') === 'true') {
+      return new Response(
+        JSON.stringify({ league_config: league, sleeper_league_id: league.sleeper_league_id }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // Fetch data from Sleeper API
+    const sleeperData = await fetchSleeperData(league.sleeper_league_id, week_number)
+    
+    // Create user mappings for owner names
+    const userMappings = await createUserMappings(supabase, sleeperData, league_id)
+    
+    // Get transaction stats for free transaction logic
+    const transactionStats = await getTransactionStats(supabase, league_id, league.free_transactions_per_season || 10)
+    
+    // Process matchups and calculate fees
+    const { fees, highScorer } = await processMatchupsAndFees(supabase, league, sleeperData, week_number, userMappings, transactionStats)
+
+    await recalculateFeeSummaries(supabase, league, userMappings, week_number)
+
+    const feeStrings = fees.map((fee) => {
+      const formattedAmount = fee.amount >= 0
+        ? fee.amount.toFixed(2)
+        : `-${Math.abs(fee.amount).toFixed(2)}`
+      return `${fee.owner_name}: $${formattedAmount} (${fee.description})`
+    })
+
+    // Add display_name to highScorer using userMappings, keep points for Discord
+    let highScorerUniform = null;
+    let highScorerForDiscord = null;
+    if (highScorer && userMappings && Array.isArray(userMappings)) {
+      const mapping = userMappings.find((m: any) => m.roster_id === highScorer.roster_id);
+      if (mapping && mapping.display_name) {
+        highScorerUniform = `${mapping.display_name} (${highScorer.points} pts)`; // Clean string format for API
+        highScorerForDiscord = {
+          display_name: mapping.display_name,
+          points: highScorer.points
+        }; // Full object for Discord
+      }
+    }
+
+    // DISCORD DISABLED - User has not approved Discord message format
+    // DO NOT SEND DISCORD MESSAGES until explicit user approval
+    console.log('Discord notifications disabled - awaiting user approval of message format')
+    
+    /*
+    // Send Discord notification with enhanced emojis for visual appeal
+    await sendDiscordNotification(
+      league.discord_webhook_url,
+      { fees, highScorer: highScorerForDiscord, bonusAmount: Number(league.high_score_bonus || 0) },
+      week_number
+    )
+    */
+
+    return new Response(
+      JSON.stringify({ success: true, fees: feeStrings, highScorer: highScorerUniform, fee_details: fees }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error('Error processing weekly fees:', error)
+    return new Response(
+      JSON.stringify({ error: message }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+    )
+  }
+})
+
+async function fetchSleeperData(leagueId: string, weekNumber: number) {
+  const baseUrl = 'https://api.sleeper.app/v1'
+  
+  console.log(`Fetching Sleeper data for league: ${leagueId}, week: ${weekNumber}`)
+  
+  // Fetch matchups
+  const matchupsRes = await fetch(`${baseUrl}/league/${leagueId}/matchups/${weekNumber}`)
+  const matchups = await matchupsRes.json()
+  console.log(`Matchups response (${matchupsRes.status}):`, matchups)
+  
+  // Fetch rosters
+  const rostersRes = await fetch(`${baseUrl}/league/${leagueId}/rosters`)
+  const rosters = await rostersRes.json()
+  console.log(`Rosters response (${rostersRes.status}):`, rosters)
+  
+  // Fetch users
+  const usersRes = await fetch(`${baseUrl}/league/${leagueId}/users`)
+  const users = await usersRes.json()
+  console.log(`Users response (${usersRes.status}):`, users)
+  
+  // Fetch transactions
+  const transactionsRes = await fetch(`${baseUrl}/league/${leagueId}/transactions/${weekNumber}`)
+  const transactions = await transactionsRes.json()
+  console.log(`Transactions response (${transactionsRes.status}):`, transactions)
+  
+  return { matchups, rosters, users, transactions }
+}
+
+async function createUserMappings(supabase: any, sleeperData: any, leagueId: string): Promise<UserMapping[]> {
+  const { users, rosters } = sleeperData
+  const mappings: UserMapping[] = []
+  
+  // Check if data is available (might be null for future weeks)
+  if (!rosters || !users) {
+    console.log('Rosters or users data not available - this is normal for future weeks')
+    return mappings
+  }
+  
+  // Create mapping between rosters and users
+  rosters.forEach((roster: any) => {
+    const user = users.find((u: any) => u.user_id === roster.owner_id)
+    if (user) {
+      mappings.push({
+        roster_id: roster.roster_id,
+        sleeper_user_id: user.user_id,
+        display_name: user.display_name || user.username || `Team ${roster.roster_id}`
+      })
+    }
+  })
+  
+  // Store/update user mappings in database
+  for (const mapping of mappings) {
+    try {
+      await supabase.from('users').upsert({
+        league_id: leagueId,
+        sleeper_user_id: mapping.sleeper_user_id,
+        roster_id: mapping.roster_id,
+        display_name: mapping.display_name
+      }, { onConflict: 'league_id,sleeper_user_id' })
+    } catch (error) {
+      console.error('Error storing user mapping:', error)
+    }
+  }
+  
+  return mappings
+}
+
+async function getTransactionStats(supabase: any, leagueId: string, freeTransactionsPerSeason: number): Promise<TransactionStats[]> {
+  try {
+    // CRITICAL: August 24, 2025 cutoff rule - only count post-draft transactions
+    const draftCutoff = new Date('2025-08-24T00:00:00Z').getTime();
+    
+    // Get all rosters for this league
+    const { data: users } = await supabase
+      .from('users')
+      .select('roster_id')
+      .eq('league_id', leagueId)
+    
+    if (!users) return []
+    
+    // Get transaction counts for each roster this season (post-draft only)
+    const { data: transactionCounts } = await supabase
+      .from('transactions')
+      .select('roster_id, count(*)')
+      .eq('league_id', leagueId)
+      .gte('created_timestamp', draftCutoff) // Only count transactions after August 24
+      .group('roster_id')
+    
+    // Get mulligan status (inactive penalties with 0 fee indicate mulligan used)
+    const { data: mulliganUsage } = await supabase
+      .from('inactive_penalties')
+      .select('roster_id, count(*)')
+      .eq('league_id', leagueId)
+      .eq('fee_amount', 0)
+      .group('roster_id')
+    
+    const stats: TransactionStats[] = []
+    
+    users.forEach((user: any) => {
+      const transactionCount = transactionCounts?.find((tc: any) => tc.roster_id === user.roster_id)?.count || 0
+      const mulliganCount = mulliganUsage?.find((mu: any) => mu.roster_id === user.roster_id)?.count || 0
+      
+      stats.push({
+        roster_id: user.roster_id,
+        transactions_used: transactionCount,
+        free_transactions_remaining: Math.max(0, freeTransactionsPerSeason - transactionCount),
+        mulligan_used: mulliganCount > 0
+      })
+    })
+    
+    return stats
+  } catch (error) {
+    console.error('Error getting transaction stats:', error)
+    return []
+  }
+}
+
+async function processMatchupsAndFees(
+  supabase: any, 
+  league: any, 
+  sleeperData: any, 
+  weekNumber: number, 
+  userMappings: UserMapping[],
+  transactionStats: TransactionStats[]
+) {
+  const fees: FeeData[] = []
+  const { matchups, rosters, users, transactions } = sleeperData
+  
+  // Check if matchup data is available (might be null for future weeks)
+  if (!matchups || !Array.isArray(matchups)) {
+    console.log('Matchup data not available - this is normal for future weeks')
+    return { fees: [], highScorer: null }
+  }
+  
+  // Create user mapping lookup for quick access
+  const userMap = new Map()
+  userMappings.forEach(mapping => {
+    userMap.set(mapping.roster_id, mapping.display_name)
+  })
+  
+  // Create transaction stats lookup
+  const statsMap = new Map()
+  transactionStats.forEach(stat => {
+    statsMap.set(stat.roster_id, stat)
+  })
+  
+  // Process each matchup
+  for (const matchup of matchups) {
+    const ownerName = userMap.get(matchup.roster_id) || `Team ${matchup.roster_id}`
+    
+    // Find opponent
+    const opponent = matchups.find((m: any) => 
+      m.matchup_id === matchup.matchup_id && m.roster_id !== matchup.roster_id
+    )
+    
+    const isWinner = opponent ? matchup.points > opponent.points : false
+    
+    // Store matchup
+    await supabase.from('matchups').upsert({
+      league_id: league.id,
+      week_number: weekNumber,
+      roster_id: matchup.roster_id,
+      opponent_roster_id: opponent?.roster_id,
+      points: matchup.points || 0,
+      opponent_points: opponent?.points || 0,
+      is_winner: isWinner,
+      loss_fee_applied: !isWinner,
+      processed_at: new Date().toISOString()
+    }, { onConflict: 'league_id,week_number,roster_id' })
+    
+    // Apply loss fee
+    if (!isWinner && opponent) {
+      fees.push({
+        roster_id: matchup.roster_id,
+        type: 'loss_fee',
+        amount: league.loss_fee,
+        description: `Week ${weekNumber} loss fee`,
+        owner_name: ownerName
+      })
+    }
+    
+    // Check for inactive players with mulligan logic
+  const inactivePlayers = checkInactivePlayers(matchup, sleeperData.players || {})
+    const rosterStats = statsMap.get(matchup.roster_id)
+    
+    for (const player of inactivePlayers) {
+      // Apply mulligan logic - first inactive player is free per roster per season
+      if (rosterStats && !rosterStats.mulligan_used) {
+        // Use mulligan - no fee for first inactive player
+        await supabase.from('inactive_penalties').insert({
+          league_id: league.id,
+          roster_id: matchup.roster_id,
+          week_number: weekNumber,
+          player_name: player,
+          fee_amount: 0 // Mulligan - no fee
+        })
+        
+        fees.push({
+          roster_id: matchup.roster_id,
+          type: 'mulligan_used',
+          amount: 0,
+          description: `[MULLIGAN] Free inactive player: ${player}`,
+          owner_name: ownerName
+        })
+        
+        // Update stats to reflect mulligan used
+        rosterStats.mulligan_used = true
+      } else {
+        // Apply normal penalty
+        await supabase.from('inactive_penalties').insert({
+          league_id: league.id,
+          roster_id: matchup.roster_id,
+          week_number: weekNumber,
+          player_name: player,
+          fee_amount: league.inactive_player_fee
+        })
+        
+        fees.push({
+          roster_id: matchup.roster_id,
+          type: 'inactive_penalty',
+          amount: league.inactive_player_fee,
+          description: `Inactive player: ${player}`,
+          owner_name: ownerName
+        })
+      }
+    }
+  }
+  
+  // Find highest scorer
+  const highScorer = matchups.reduce((max: any, m: any) => 
+    (!max || m.points > max.points) ? m : max
+  , null)
+  
+  if (highScorer) {
+    await supabase.from('matchups')
+      .update({ is_high_scorer: true })
+      .eq('league_id', league.id)
+      .eq('week_number', weekNumber)
+      .eq('roster_id', highScorer.roster_id)
+
+    const highScoreBonus = Number(league.high_score_bonus || 0)
+    if (highScoreBonus > 0) {
+      const highScoreOwner = userMap.get(highScorer.roster_id) || `Team ${highScorer.roster_id}`
+      fees.push({
+        roster_id: highScorer.roster_id,
+        type: 'high_score_bonus',
+        amount: -highScoreBonus,
+        description: `High scorer bonus - Week ${weekNumber}`,
+        owner_name: highScoreOwner
+      })
+    }
+  }
+  
+  // CRITICAL: August 24, 2025 cutoff rule for transaction counting
+  // Only transactions occurring on/after August 24, 2025 count toward fees
+  const draftCutoff = new Date('2025-08-24T00:00:00Z').getTime();
+  const validTransactions = (transactions || []).filter((t: any) => t.created >= draftCutoff);
+  
+  console.log(`Total transactions: ${transactions?.length || 0}, Post-draft transactions: ${validTransactions.length}`);
+  
+  // Process transactions with free transaction logic (using post-draft transactions only)
+  for (const transaction of validTransactions) {
+    if (['waiver', 'free_agent'].includes(transaction.type)) {
+      const rosterId = transaction.roster_ids?.[0]
+      const ownerName = userMap.get(rosterId) || `Team ${rosterId}`
+      const rosterStats = statsMap.get(rosterId)
+      if (!rosterStats) continue;
+      // Check if this roster has free transactions remaining (and decrement for each processed)
+      if (rosterStats.free_transactions_remaining > 0) {
+        await supabase.from('transactions').upsert({
+          league_id: league.id,
+          sleeper_transaction_id: transaction.transaction_id,
+          roster_id: rosterId,
+          type: transaction.type,
+          week_number: weekNumber,
+          fee_amount: 0,
+          created_timestamp: transaction.created,
+          processed: true
+        }, { onConflict: 'sleeper_transaction_id' })
+        fees.push({
+          roster_id: rosterId,
+          type: 'free_transaction',
+          amount: 0,
+          description: `[FREE] ${transaction.type} (${rosterStats.free_transactions_remaining - 1} remaining)`,
+          owner_name: ownerName
+        })
+        rosterStats.free_transactions_remaining--;
+      } else {
+        await supabase.from('transactions').upsert({
+          league_id: league.id,
+          sleeper_transaction_id: transaction.transaction_id,
+          roster_id: rosterId,
+          type: transaction.type,
+          week_number: weekNumber,
+          fee_amount: league.transaction_fee,
+          created_timestamp: transaction.created,
+          processed: true
+        }, { onConflict: 'sleeper_transaction_id' })
+        fees.push({
+          roster_id: rosterId,
+          type: 'transaction_fee',
+          amount: league.transaction_fee,
+          description: `${transaction.type} transaction`,
+          owner_name: ownerName
+        })
+      }
+    } else if (transaction.type === 'trade') {
+      // Trades are always free - just track them without fees
+      const rosterId = transaction.roster_ids?.[0]
+      const ownerName = userMap.get(rosterId) || `Team ${rosterId}`
+      
+      await supabase.from('transactions').upsert({
+        league_id: league.id,
+        sleeper_transaction_id: transaction.transaction_id,
+        roster_id: rosterId,
+        type: transaction.type,
+        week_number: weekNumber,
+        fee_amount: 0, // Trades are always free
+        created_timestamp: transaction.created, // Add Sleeper creation timestamp
+        processed: true
+      }, { onConflict: 'sleeper_transaction_id' })
+      
+      fees.push({
+        roster_id: rosterId,
+        type: 'free_trade',
+        amount: 0,
+        description: `[FREE] Trade transaction`,
+        owner_name: ownerName
+      })
+    }
+  }
+  
+  return { fees, highScorer }
+}
+
+async function recalculateFeeSummaries(
+  supabase: any,
+  league: any,
+  userMappings: UserMapping[],
+  weekNumber: number | null
+) {
+  const ownerMap = new Map<number, string>()
+  userMappings.forEach((mapping) => {
+    ownerMap.set(mapping.roster_id, mapping.display_name)
+  })
+
+  const summaryMap = new Map<number, RosterFeeAccumulator>()
+  const ensureAccumulator = (rosterId: number): RosterFeeAccumulator => {
+    const numericRoster = Number(rosterId)
+    if (!summaryMap.has(numericRoster)) {
+      summaryMap.set(numericRoster, {
+        roster_id: numericRoster,
+        owner_name: ownerMap.get(numericRoster),
+        loss_fees: 0,
+        transaction_fees: 0,
+        inactive_fees: 0,
+        high_score_credits: 0,
+        other_fees: 0,
+        total_transactions: 0,
+        paid_transactions: 0,
+        mulligan_used: false
+      })
+    }
+    return summaryMap.get(numericRoster)!
+  }
+
+  const { data: existingSummaries } = await supabase
+    .from('fee_summaries')
+    .select('*')
+    .eq('league_id', league.id)
+
+  const existingMap = new Map<number, any>()
+  existingSummaries?.forEach((row: any) => {
+    const rosterId = Number(row.roster_id)
+    const acc = ensureAccumulator(rosterId)
+    if (!acc.owner_name && row.owner_name) {
+      acc.owner_name = row.owner_name
+    }
+    existingMap.set(rosterId, row)
+  })
+
+  const lossFeeValue = Number(league.loss_fee || 0)
+  const highScoreBonusValue = Number(league.high_score_bonus || 0)
+  const freeAllowance = Number(league.free_transactions_per_season || 10)
+
+  const { data: matchupRows } = await supabase
+    .from('matchups')
+    .select('roster_id, loss_fee_applied, is_high_scorer')
+    .eq('league_id', league.id)
+
+  matchupRows?.forEach((row: any) => {
+    const rosterId = Number(row.roster_id)
+    const acc = ensureAccumulator(rosterId)
+    if (!acc.owner_name) {
+      acc.owner_name = ownerMap.get(rosterId)
+    }
+    if (row.loss_fee_applied) {
+      acc.loss_fees += lossFeeValue
+    }
+    if (row.is_high_scorer) {
+      acc.high_score_credits += highScoreBonusValue
+    }
+  })
+
+  const { data: transactionRows } = await supabase
+    .from('transactions')
+    .select('roster_id, fee_amount, type')
+    .eq('league_id', league.id)
+
+  transactionRows?.forEach((row: any) => {
+    const rosterId = Number(row.roster_id)
+    const feeAmount = Number(row.fee_amount || 0)
+    const transactionType = row.type || ''
+    const acc = ensureAccumulator(rosterId)
+    if (!acc.owner_name) {
+      acc.owner_name = ownerMap.get(rosterId)
+    }
+
+    const isCountableTransaction = ['waiver', 'free_agent'].includes(transactionType)
+    if (isCountableTransaction) {
+      acc.total_transactions += 1
+    }
+
+    if (feeAmount > 0) {
+      if (isCountableTransaction) {
+        acc.transaction_fees += feeAmount
+        acc.paid_transactions += 1
+      } else {
+        acc.other_fees += feeAmount
+      }
+    }
+  })
+
+  const { data: penaltyRows } = await supabase
+    .from('inactive_penalties')
+    .select('roster_id, fee_amount')
+    .eq('league_id', league.id)
+
+  penaltyRows?.forEach((row: any) => {
+    const rosterId = Number(row.roster_id)
+    const feeAmount = Number(row.fee_amount || 0)
+    const acc = ensureAccumulator(rosterId)
+    if (!acc.owner_name) {
+      acc.owner_name = ownerMap.get(rosterId)
+    }
+
+    if (feeAmount > 0) {
+      acc.inactive_fees += feeAmount
+    } else {
+      acc.mulligan_used = true
+    }
+  })
+
+  userMappings.forEach(({ roster_id, display_name }) => {
+    const acc = ensureAccumulator(roster_id)
+    if (!acc.owner_name) {
+      acc.owner_name = display_name
+    }
+  })
+
+  const toCurrency = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100
+  const nowIso = new Date().toISOString()
+
+  const summaries = Array.from(summaryMap.values()).map((acc) => {
+    const existing = existingMap.get(acc.roster_id)
+    const ownerName = acc.owner_name || existing?.owner_name || `Team ${acc.roster_id}`
+    const totalPaid = existing?.total_paid ? Number(existing.total_paid) : 0
+    const lossFees = toCurrency(acc.loss_fees)
+    const transactionFees = toCurrency(acc.transaction_fees)
+    const inactiveFees = toCurrency(acc.inactive_fees)
+    const otherFees = toCurrency(acc.other_fees)
+    const highScoreCredits = toCurrency(acc.high_score_credits)
+    const totalOwed = toCurrency(lossFees + transactionFees + inactiveFees + otherFees - highScoreCredits)
+    const balance = toCurrency(totalOwed - totalPaid)
+    const freeRemaining = Math.max(0, freeAllowance - acc.total_transactions)
+
+    return {
+      league_id: league.id,
+      roster_id: acc.roster_id,
+      owner_name: ownerName,
+      loss_fees: lossFees,
+      transaction_fees: transactionFees,
+      inactive_fees: inactiveFees,
+      high_score_credits: highScoreCredits,
+      other_fees: otherFees,
+      total_owed: totalOwed,
+      total_paid: toCurrency(totalPaid),
+      balance,
+      free_transactions_remaining: freeRemaining,
+      total_transactions: acc.total_transactions,
+      paid_transactions: acc.paid_transactions,
+      mulligan_used: acc.mulligan_used,
+      updated_week: weekNumber ?? existing?.updated_week ?? null,
+      last_updated: nowIso
+    }
+  })
+
+  // TEMPORARILY DISABLED - Fee summaries table doesn't exist yet
+  // Will re-enable once table is created or after 2025 season setup
+  console.log('Fee summaries update skipped - table not configured yet')
+  
+  /*
+  if (summaries.length === 0) {
+    return
+  }
+
+  const { error } = await supabase
+    .from('fee_summaries')
+    .upsert(summaries, { onConflict: 'league_id,roster_id' })
+
+  if (error) {
+    console.error('Error updating fee summaries:', error)
+    throw new Error('Failed to update fee summaries')
+  }
+  */
+}
+
+// Enhanced: Use player status from Sleeper API to determine true inactivity
+// Enhanced: Use player status from Sleeper API to determine true inactivity
+function checkInactivePlayers(matchup: any, playerMap: Record<string, any>): string[] {
+  const inactivePlayers: string[] = [];
+  if (!matchup.starters || !Array.isArray(matchup.starters)) return inactivePlayers;
+  for (let i = 0; i < matchup.starters.length; i++) {
+    const playerId = matchup.starters[i];
+    if (!playerId) continue;
+    const player = playerMap[playerId];
+    // Only flag as inactive if status is truly inactive, out, bye, or did_not_play
+    const status = player?.status || player?.game_status || "";
+    if (["inactive", "out", "bye", "did_not_play"].includes(status.toLowerCase())) {
+      inactivePlayers.push(playerId);
+    }
+  }
+  return inactivePlayers;
+}
+
+async function sendDiscordNotification(
+  webhookUrl: string | null | undefined,
+  data: { fees: FeeData[]; highScorer: { display_name: string; points: number } | null; bonusAmount: number },
+  weekNumber: number
+) {
+  if (!webhookUrl) {
+    console.log('Discord webhook not configured. Skipping notification.')
+    return
+  }
+
+  const { fees, highScorer, bonusAmount } = data
+
+  const embed: DiscordEmbed = {
+    title: `📊 Week ${weekNumber} Fee Summary`,
+    color: 0x5865f2,
+    fields: [],
+    footer: {
+      text: 'Fantasy Fee Tracker | Powered by Sleeper API',
+      icon_url: 'https://play-lh.googleusercontent.com/Gc1fceG8T5P6XqaFLTwFfq66OkreFWWUMpfIDT2UKmayMlJaXnTkgTpH1w1uEIlPhoo'
+    },
+    timestamp: new Date().toISOString()
+  }
+
+  if (highScorer && highScorer.display_name && highScorer.points) {
+    embed.fields.push({
+      name: '🏆 Highest Scorer',
+      value: `${highScorer.display_name}: ${highScorer.points} pts\n+$${Number(bonusAmount || 0).toFixed(2)} bonus`,
+      inline: false
+    })
+  }
+
+  const feeTotals = new Map<string, { total: number; charges: number }>()
+  if (Array.isArray(fees)) {
+    fees.forEach((fee) => {
+      const ownerName = fee.owner_name || `Team ${fee.roster_id}`
+      if (!feeTotals.has(ownerName)) {
+        feeTotals.set(ownerName, { total: 0, charges: 0 })
+      }
+      const entry = feeTotals.get(ownerName)!
+      entry.total += fee.amount
+      if (fee.amount > 0) {
+        entry.charges += fee.amount
+      }
+    })
+  }
+
+  let totalWeekFees = 0
+  for (const [ownerName, value] of feeTotals.entries()) {
+    if (value.charges <= 0) {
+      continue
+    }
+    totalWeekFees += value.charges
+    embed.fields.push({
+      name: `💸 ${ownerName}`,
+      value: `Fees: $${value.charges.toFixed(2)}`,
+      inline: true
+    })
+  }
+
+  embed.fields.push({
+    name: '💰 Total Week Fees',
+    value: `$${totalWeekFees.toFixed(2)}`,
+    inline: false
+  })
+
+  await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      username: 'Fantasy Fee Tracker',
+      embeds: [embed]
+    })
+  })
+}
+
