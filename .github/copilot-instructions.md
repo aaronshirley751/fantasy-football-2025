@@ -1,45 +1,68 @@
 # Copilot Instructions for Fantasy Football 2025
 
 ## Overview
-This project is a **production-ready Fantasy Football fee tracker** built using Supabase Edge Functions and Deno. It integrates with the Sleeper API to process weekly fees, calculate penalties, and send rich Discord notifications with automated GitHub Actions workflows. The system has been validated with real league data processing $99.00 in actual fees.
+This project is a **production-ready Fantasy Football fee tracker** built using Supabase Edge Functions (Deno) and PostgreSQL. It integrates with the Sleeper API to process weekly fees, calculate penalties, and sends rich Discord notifications via automated GitHub Actions workflows. The system is **fully operational** with live 2025 season data.
 
-## 🚨 CURRENT STATUS: September 16, 2025 - Season Active
-- **Production State**: System should be running live with 2025 league data
-- **2025 League ID**: `1249067741470539776` (verified active, "in_season" status)
-- **Legacy Test League**: `d06f0672-2848-4b5d-86f5-9ab559605b4f` (historical validation data)
-- **Critical Business Rule**: **August 24, 2025 cutoff** - only post-draft transactions count toward fees
-- **GitHub Actions**: Should be re-enabled for weekly Tuesday 2 AM EST processing
+## 🚨 CURRENT STATUS: October 7, 2025 - Production Live
+- **Production State**: ✅ FULLY OPERATIONAL with Discord integration (Version 73)
+- **2025 League ID**: `1249067741470539776` (active, in_season)
+- **Season Progress**: Week 5+ (as of October 2025), $132+ processed through Week 4
+- **Critical Business Rule**: **August 24, 2025 cutoff** - only post-draft transactions count toward free transaction limit
+- **GitHub Actions**: ✅ ENABLED - Automated Tuesday 2 AM EST processing active
 
 ## Architecture & Key Components
-- **Supabase Edge Functions**: Located in `fantasy-fee-tracker/supabase/functions/`. Three main functions:
-  - `process-weekly-fees/`: Core fee processing logic (552 lines, production-deployed)
-  - `setup-league/`: League configuration management with `setup_2025_league` action capability
+- **Supabase Edge Functions**: Located in `fantasy-fee-tracker/supabase/functions/`
+  - `process-weekly-fees/`: Core fee processor (Version 73, 462 lines) with Discord integration
+  - `setup-league/`: League configuration management
   - `debug-league/`: Development and testing utilities
-- **Database**: PostgreSQL with enhanced schema supporting owner mapping, transaction tracking, and mulligan system
-- **External APIs**: Sleeper API for league data + Discord webhooks for rich notifications  
-- **Automation**: GitHub Actions with weekly scheduling and manual triggers
+- **Database**: PostgreSQL with enhanced schema (see `migrations/20250921083000_create_fee_summaries_table.sql`)
+  - Tables: `leagues`, `users`, `matchups`, `transactions`, `inactive_penalties`, `fee_summaries`
+  - Key feature: `discord_webhook_url` in leagues table for notifications
+- **External APIs**: 
+  - Sleeper API: League data, rosters, transactions, matchups (1000 req/min limit)
+  - Discord webhooks: Rich formatted notifications with emojis
+- **Automation**: GitHub Actions `.github/workflows/weekly-fee-processing.yml`
+  - Scheduled: Every Tuesday 2 AM EST (7 AM UTC)
+  - Manual triggers: `workflow_dispatch` with week number input
+  - Success rate: 16+ consecutive successful runs
+
+## Data Flow Architecture
+```
+Sleeper API → Edge Function → PostgreSQL → Discord Webhook
+     ↓              ↓              ↓              ↓
+  Matchups    Fee Calc     Upsert Ops    Formatted
+  Rosters     Business     fee_summaries  Messages
+  Transactions Rules       + user names   + Emojis
+  Players     Mulligans
+```
 
 ## Project Structure
 ```
 Fantasy Football 2025/
 ├── .github/
-│   ├── copilot-instructions.md
+│   ├── copilot-instructions.md            # This file
 │   └── workflows/
-│       └── weekly-fee-processing.yml    # Automated scheduling (16+ successful historical runs)
+│       └── weekly-fee-processing.yml      # Production automation (active)
 ├── fantasy-fee-tracker/
 │   ├── supabase/
-│   │   ├── config.toml
-│   │   └── functions/
-│   │       ├── process-weekly-fees/     # Main function (552 lines)
-│   │       ├── setup-league/            # Configuration management
-│   │       └── debug-league/           # Testing utilities
+│   │   ├── config.toml                    # Supabase project config
+│   │   ├── functions/
+│   │   │   └── process-weekly-fees/       # Main function (Version 73, 462 lines)
+│   │   │       ├── index.ts               # Core logic with Discord integration
+│   │   │       └── types.d.ts             # TypeScript definitions
+│   │   └── migrations/
+│   │       └── 20250921083000_create_fee_summaries_table.sql
 │   └── README.md
-├── analysis scripts/                    # Transaction analysis tools (created Sept 4, 2025)
-│   ├── count_transactions.js
-│   ├── post_draft_transaction_analysis.js  # Implements August 24 cutoff rule
-│   ├── transaction_audit.js
-│   └── enhanced_transaction_analysis.js
-└── SESSION_SUMMARY_2025-09-04.md      # Critical findings and business rule changes
+├── Utility Scripts/ (root directory)      # 100+ analysis/testing scripts
+│   ├── CONFIGURE_DISCORD_WEBHOOK_FOR_TESTING.js  # Discord setup
+│   ├── CHECK_WEBHOOK_CONFIG.js            # Webhook validation
+│   ├── enhanced_transaction_analysis.js   # August 24 cutoff validation
+│   ├── comprehensive_all_rosters_audit.js # Full roster audit
+│   └── check_database_state.js            # DB verification
+└── Documentation/ (root directory)
+    ├── README.md                          # Comprehensive production docs
+    ├── COMMIT_MESSAGE_OCTOBER_1_2025.md   # Latest deployment details
+    └── SESSION_SUMMARY_2025-09-04.md      # Critical business rule findings
 ```
 
 ## Enhanced Features (All Production-Ready)
@@ -58,6 +81,13 @@ Fantasy Football 2025/
 - First inactive player penalty waived per roster per season  
 - Shows "[MULLIGAN] Free inactive player: PlayerName" in Discord
 - Subsequent inactive players: $5 penalty each
+
+### 4. **Discord Integration (Version 73)**
+- Rich formatted notifications with emojis (📊 🏆 💰)
+- Weekly summary with individual fees and season totals
+- Webhook URL stored in `leagues.discord_webhook_url` field
+- Approved format: Single message with weekly + season breakdown
+- Safety: Only sends if webhook URL is configured (NULL check)
 
 ## 🔍 CRITICAL BUSINESS RULE: August 24, 2025 Transaction Cutoff
 **ESTABLISHED SEPTEMBER 4, 2025**: Only transactions occurring on/after August 24, 2025 count toward the 10 free transaction limit.
@@ -87,6 +117,21 @@ npx supabase functions deploy debug-league
 npx supabase functions serve process-weekly-fees
 ```
 
+### Production Testing
+```bash
+# Test with 2025 live league data  
+curl -X POST https://jfeuobfjgqownybluvje.supabase.co/functions/v1/process-weekly-fees \
+  -H "Authorization: Bearer [SERVICE_ROLE_KEY]" \
+  -H "Content-Type: application/json" \
+  -d '{"week_number": 4, "league_id": "1249067741470539776"}'
+
+# Expected response includes:
+# - success: true
+# - discord_sent: true (if webhook configured)
+# - week_total: "20"
+# - season_grand_total: "132"
+```
+
 ### Transaction Analysis Workflow (Critical for Fee Validation)
 ```bash
 # Download current transaction data for analysis
@@ -95,19 +140,22 @@ curl -s "https://api.sleeper.app/v1/league/1249067741470539776/users" > users.js
 curl -s "https://api.sleeper.app/v1/league/1249067741470539776/rosters" > rosters.json
 
 # Run post-draft analysis (implements August 24 cutoff)
-node post_draft_transaction_analysis.js
+node enhanced_transaction_analysis.js
 
 # Detailed audit for investigating discrepancies
-node transaction_audit.js
+node comprehensive_all_rosters_audit.js
 ```
 
-### Testing Production Function
+### Discord Configuration
 ```bash
-# Test with 2025 live league data  
-curl -X POST https://jfeuobfjgqownybluvje.supabase.co/functions/v1/process-weekly-fees \
-  -H "Authorization: Bearer [ANON_KEY]" \
-  -H "Content-Type: application/json" \
-  -d '{"week_number": 1, "league_id": "1249067741470539776"}'
+# Configure webhook URL for notifications
+node CONFIGURE_DISCORD_WEBHOOK_FOR_TESTING.js
+
+# Verify webhook configuration in database
+node CHECK_WEBHOOK_CONFIG.js
+
+# Test production function with Discord
+node TRIGGER_PRODUCTION_FUNCTION.js
 ```
 
 ## Project-Specific Conventions
@@ -136,6 +184,18 @@ interface TransactionStats {
   free_transactions_remaining: number;
   mulligan_used: boolean;
 }
+
+// Season summary with detailed breakdowns
+interface SeasonSummary {
+  roster_id: number;
+  owner_name: string;
+  season_total: number;
+  transaction_fees: number;
+  losses_inactive_fees: number;
+  high_scorer_bonuses: number;
+  transactions_used: number;
+  free_remaining: number;
+}
 ```
 
 ### Database Operations
@@ -155,6 +215,21 @@ const embed = {
     { name: "Tom Davis", value: "[FREE] Trade transaction" }
   ]
 }
+
+// Approved production format (Version 73):
+message = `📊 Week ${weekNumber} Fantasy Football Fees
+🏆 Highest Scorer
+${owner}: ${points} pts (-$5 bonus)
+🆕 THIS WEEK'S ACTIVITY
+━━━━━━━━━━━━━━━━━━━━━━━━
+• ${owner}: Loss ($5) = $5.00
+💰 Week Total
+$${weekTotal}
+📈 SEASON TOTALS (All Teams)
+━━━━━━━━━━━━━━━━━━━━━━━━
+• ${owner}: $${total} total ($X transactions, $Y losses/inactive, -$Z high scorer bonus), ${free}/10 free remaining
+🏦 Season Grand Total
+$${seasonGrandTotal} across all teams`;
 ```
 
 ## Critical Business Logic
@@ -183,34 +258,15 @@ if (['waiver', 'free_agent'].includes(transaction.type)) {
 - `SUPABASE_URL`: Project URL for database connection
 - `SUPABASE_SERVICE_ROLE_KEY`: Service role key for full database access
 - **Production Project**: `jfeuobfjgqownybluvje`
-- **2024 Test League**: `d06f0672-2848-4b5d-86f5-9ab559605b4f` (historical data for validation)
-- **2025 Live League**: `1249067741470539776` (verified active, ready for transition)
+- **2025 Live League**: `1249067741470539776` (active, in production)
+- **Discord Webhook**: Configured in `leagues.discord_webhook_url` (per league)
 
 ## GitHub Actions Integration
-- **Scheduled**: Every Tuesday 2 AM EST (after Monday Night Football) - **CURRENTLY DISABLED**
-- **Manual triggers**: Support week number input via `workflow_dispatch`
+- **Scheduled**: Every Tuesday 2 AM EST (7 AM UTC) - **CURRENTLY ACTIVE**
+- **Manual triggers**: `workflow_dispatch` with week number and league ID inputs
 - **Success rate**: 16+ consecutive successful runs validated
 - **Error handling**: Comprehensive logging with Discord notifications
-- **Production Safety**: Cron schedule commented out to prevent test data execution during 2025 season start
-
-## 2025 Season Transition Workflow
-### Execute Clean Transition (When Ready)
-```bash
-# 1. Clear test data and configure 2025 league
-curl -X POST https://jfeuobfjgqownybluvje.supabase.co/functions/v1/setup-league \
-  -H "Authorization: Bearer [ANON_KEY]" \
-  -H "Content-Type: application/json" \
-  -d '{"action": "setup_2025_league", "league_id_2025": "1249067741470539776"}'
-
-# 2. Test Week 1 processing manually
-curl -X POST https://jfeuobfjgqownybluvje.supabase.co/functions/v1/process-weekly-fees \
-  -H "Authorization: Bearer [ANON_KEY]" \
-  -H "Content-Type: application/json" \
-  -d '{"week_number": 1, "league_id": "1249067741470539776"}'
-
-# 3. Update GitHub Actions default league_id to 2025 league
-# 4. Re-enable cron schedule in .github/workflows/weekly-fee-processing.yml
-```
+- **Auto-calculation**: Automatically determines current NFL week from season start date
 
 ## Common Development Patterns
 - **Import structure**: Use `/// <reference path="./types.d.ts" />` for custom types
@@ -220,9 +276,9 @@ curl -X POST https://jfeuobfjgqownybluvje.supabase.co/functions/v1/process-weekl
 - **Upsert strategy**: Use `onConflict` parameters for duplicate prevention
 
 ## Testing & Validation
-- **Real data validation**: $99.00 in actual fees processed with Week 16 data
+- **Production validation**: $132+ in actual fees processed through Week 4+ (October 2025)
 - **Enhanced features confirmed**: Owner names, free transactions, mulligan system all working
-- **Discord integration**: "2025 FFL Tracker" server receiving rich notifications
-- **Database operations**: All enhanced features validated with real league data
-- **Production safety**: Emergency prevention system implemented for 2025 season start
-- **Manual control**: All processing under explicit control until live season validated
+- **Discord integration**: Live with approved format and emoji indicators
+- **Database operations**: All enhanced features validated with real 2025 league data
+- **Automation verified**: GitHub Actions running weekly with 100% success rate
+- **Real-time processing**: Sub-3-second execution with immediate Discord delivery
