@@ -1,0 +1,26 @@
+{
+  "name": "fantasy-football-roster-optimizer",
+  "version": "1.0.0",
+  "description": "AI-powered fantasy football roster analysis and optimization using Sleeper API",
+  "main": "analyze-roster.js",
+  "scripts": {
+    "analyze": "node analyze-roster.js",
+    "analyze:league": "node analyze-roster.js --league=1249067741470539776",
+    "test": "echo \"Testing roster optimizer...\" && node analyze-roster.js --league=1249067741470539776"
+  },
+  "keywords": [
+    "fantasy-football",
+    "sleeper",
+    "fantasy-sports",
+    "roster-optimization",
+    "nfl",
+    "waiver-analysis"
+  ],
+  "author": "Fantasy Football 2025 Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
