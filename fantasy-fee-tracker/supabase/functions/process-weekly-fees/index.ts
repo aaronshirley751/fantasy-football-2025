@@ -30,6 +30,10 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+// Global Discord kill-switch & validation
+const DISCORD_DISABLE = (Deno.env.get('DISCORD_DISABLE') || '').toLowerCase() === 'true';
+const DISCORD_ALLOWED_PREFIXES = ['https://discord.com/api/webhooks/', 'https://discordapp.com/api/webhooks/'];
+
 // Define types for better type safety
 interface FeeData {
   roster_id: number;
@@ -78,8 +82,19 @@ async function sendDiscordNotification(
   seasonGrandTotal: number,
   highScorer: any
 ) {
+  if (DISCORD_DISABLE) {
+    console.log('Discord notifications globally disabled via DISCORD_DISABLE env flag');
+    return false;
+  }
+
   if (!league.discord_webhook_url) {
     console.log('No Discord webhook URL configured - skipping Discord notification');
+    return false;
+  }
+
+  const webhook = league.discord_webhook_url.trim();
+  if (!DISCORD_ALLOWED_PREFIXES.some(p => webhook.startsWith(p))) {
+    console.log('Webhook URL does not match allowed Discord prefixes - skipping send');
     return false;
   }
 
